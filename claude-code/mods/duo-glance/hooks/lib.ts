@@ -65,10 +65,10 @@ export const outputText = (result: unknown): string => {
   return [field(result, 'stdout'), field(result, 'stderr')].filter(Boolean).join('\n')
 }
 
-export const emptyAway = (since: number): Away => ({ since, turns: 0, changed: [], tests: [], errors: 0, waiting: [] })
+export const emptyAway = (since: number): Away => ({ since, turns: 0, changed: [], tests: [], errors: 0 })
 
 export const hasNews = (away: Away) =>
-  away.turns > 0 || away.changed.length > 0 || away.tests.length > 0 || away.errors > 0 || away.waiting.length > 0
+  away.turns > 0 || away.changed.length > 0 || away.tests.length > 0 || away.errors > 0
 
 export const duration = (ms: number) => {
   const minutes = Math.max(0, Math.round(ms / 60_000))

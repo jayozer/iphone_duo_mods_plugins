@@ -5,6 +5,7 @@ import { readTestRun } from '../hooks/lib'
 
 // Stands in for the engine beneath the plugin: a phone that comes and goes, panes, usage.
 const midQuestion: { run?: () => Promise<void> } = {}
+const bash: { isDenied: boolean } = { isDenied: false }
 
 const engine = (on: On, opened: string[]) => {
   let surfaces: ('mobile' | 'terminal')[] = []
@@ -30,6 +31,7 @@ const engine = (on: On, opened: string[]) => {
   on('tool.call', async (_$, e) => {
     // The phone comes back while the question is still open, then the person answers it.
     if (e.tool === 'AskUserQuestion') await midQuestion.run?.()
+    if (e.tool === 'Bash' && bash.isDenied) return { deny: 'Denied by a plugin' } as never
     return e.tool === 'Bash'
       ? ({ result: { stdout: 'Tests: 2 failed, 9 passed', stderr: '', interrupted: false }, isError: true } as never)
       : ({ result: { filePath: '/repo/src/app.ts' } } as never)
@@ -90,18 +92,18 @@ test('a question answered while away is no longer listed as waiting', async ($, 
   await ui.unmount()
 })
 
-test('a question answered after the phone came back leaves the summary', async ($, on) => {
+test('a question asked before you left is waiting when you come back, and leaves once answered', async ($, on) => {
   const opened: string[] = []
   engine(on, opened)
   let isShownWhileOpen = false
   midQuestion.run = async () => {
+    await $.session.detach({ ...phone, reason: 'detached' } as never)
     await $.session.attach(phone)
     const open = await $.ui.mount(pane('duo-away', 40))
     isShownWhileOpen = (await open.find({ text: 'Which database?' })) !== undefined
     await open.unmount()
   }
   await $.session.attach(phone)
-  await $.session.detach({ ...phone, reason: 'detached' } as never)
   await $.tool.call({ tool: 'AskUserQuestion', input: { questions: [{ question: 'Which database?' }] } } as never)
   midQuestion.run = undefined
   expect(isShownWhileOpen).toBe(true)
@@ -156,4 +158,38 @@ test('test output is read for pass and fail counts', () => {
   expect(readTestRun('pytest', '12 passed in 0.4s', false).isPassing).toBe(true)
   const jest = 'Test Suites: 1 failed, 2 passed, 3 total\nTests:       1 failed, 9 passed, 10 total'
   expect(readTestRun('npx jest', jest, true)).toMatchObject({ passed: 9, failed: 1 })
+})
+
+test('a denied test command is not reported as a failing run', async ($, on) => {
+  const opened: string[] = []
+  engine(on, opened)
+  bash.isDenied = true
+  await $.tool.call({ tool: 'Bash', input: { command: 'npm test' } } as never)
+  bash.isDenied = false
+  await $.command.run({
+    command: 'glance',
+    args: 'monitor',
+    origin: { kind: 'composer' },
+    presentation: { isFullscreen: false, columns: 80 },
+  })
+  const ui = await $.ui.mount(pane('duo-monitor', 40))
+  expect(await ui.find({ text: 'No test run yet' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('the monitor drops a step once its tool finishes', async ($, on) => {
+  const opened: string[] = []
+  engine(on, opened)
+  await $.turn.start({ text: 'fix the bug', turnId: 'turn-1' } as never)
+  await $.tool.call({ tool: 'Edit', input: { file_path: '/repo/src/app.ts', old_string: 'a', new_string: 'b' } } as never)
+  await $.command.run({
+    command: 'glance',
+    args: 'monitor',
+    origin: { kind: 'composer' },
+    presentation: { isFullscreen: false, columns: 80 },
+  })
+  const ui = await $.ui.mount(pane('duo-monitor', 40))
+  expect(await ui.find({ text: 'Thinking' })).toBeDefined()
+  expect(await ui.find({ text: 'Edit · app.ts' })).toBeUndefined()
+  await ui.unmount()
 })

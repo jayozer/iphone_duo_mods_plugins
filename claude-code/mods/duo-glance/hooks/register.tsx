@@ -28,7 +28,8 @@ const NO_GAUGES: Gauges = { contextPercent: null, ratePercent: null, costUsd: nu
 const isPhone = atom({ plugin: 'duo-glance', key: 'isPhone' } as const, false)
 const away = atom({ plugin: 'duo-glance', key: 'away' } as const, null)
 const summary = atom({ plugin: 'duo-glance', key: 'summary' } as const, null)
-const step = atom({ plugin: 'duo-glance', key: 'step' } as const, null)
+const pending = atom({ plugin: 'duo-glance', key: 'pending' } as const, [])
+const steps = atom({ plugin: 'duo-glance', key: 'steps' } as const, [])
 const turnStartedAt = atom({ plugin: 'duo-glance', key: 'turnStartedAt' } as const, null)
 const lastTest = atom({ plugin: 'duo-glance', key: 'lastTest' } as const, null)
 const gauges = atom({ plugin: 'duo-glance', key: 'gauges' } as const, NO_GAUGES)
@@ -96,7 +97,7 @@ export const register: Register = on => {
     await update($, isPhone, () => true)
     const held = await read($, away)
     await update($, away, () => null)
-    if (held !== null && hasNews(held)) {
+    if (held !== null && (hasNews(held) || (await read($, pending)).length > 0)) {
       const until = await $.clock.now()
       await update($, summary, () => ({ ...held, until }))
       await $.ui.open({ id: AWAY_PANE, title: 'While you were away' })
@@ -132,7 +133,7 @@ export const register: Register = on => {
         (held === null
           ? 'Not counting an absence.'
           : `Away for ${duration((await $.clock.now()) - held.since)}: ${held.turns} turns, ` +
-            `${held.changed.length} files changed, ${held.waiting.length} waiting on you.`),
+            `${held.changed.length} files changed, ${(await read($, pending)).length} waiting on you.`),
     }
   })
 
@@ -157,7 +158,9 @@ export const register: Register = on => {
   on('turn.complete', async ($, e, next) => {
     if (e.agentId !== undefined) return next(e)
     await update($, turnStartedAt, () => null)
-    await update($, step, () => null)
+    await update($, steps, () => [])
+    // Nothing outlives its turn, even a call the engine never reported back on.
+    await update($, pending, () => [])
     await update($, away, held => (held === null ? null : { ...held, turns: held.turns + 1 }))
     const usage = await $.session.usage()
     await update($, gauges, () => readGauges(usage))
@@ -174,9 +177,12 @@ export const register: Register = on => {
 
   on('tool.check', async ($, e, next) => {
     const verdict = await next(e)
-    if (verdict.decision === 'ask' && e.tool_use_id !== undefined && (await read($, away)) !== null) {
-      const item = { id: e.tool_use_id, text: `Approve ${describeCall(e.tool, e.input)}` }
-      await update($, away, held => (held === null ? null : { ...held, waiting: [...held.waiting, item] }))
+    // Only a real call carries an id; tracked while you are here too, so an absence that
+    // starts mid-approval still lists it.
+    const id = e.tool_use_id
+    if (verdict.decision === 'ask' && id !== undefined) {
+      const item = { id, text: `Approve ${describeCall(e.tool, e.input)}` }
+      await update($, pending, list => [...list.filter(one => one.id !== id), item])
       await notifyAway($, `Waiting for your OK: ${describeCall(e.tool, e.input)}`)
     }
 
@@ -185,22 +191,22 @@ export const register: Register = on => {
 
   on('tool.call', async ($, e, next) => {
     const input = callInput(e)
-    if (e.agentId === undefined) await update($, step, () => describeCall(e.tool, input))
-    if (e.tool === 'AskUserQuestion' && (await read($, away)) !== null) {
-      const item = { id: e.tool_use_id, text: firstQuestion(input) }
-      await update($, away, held => (held === null ? null : { ...held, waiting: [...held.waiting, item] }))
+    const id = e.tool_use_id
+    const isMainLoop = e.agentId === undefined
+    if (isMainLoop) await update($, steps, list => [...list, { id, text: describeCall(e.tool, input) }])
+    if (e.tool === 'AskUserQuestion') {
+      const item = { id, text: firstQuestion(input) }
+      await update($, pending, list => [...list, item])
       await notifyAway($, item.text)
     }
     const ran = await next(e)
-    const isFailed = 'deny' in ran && ran.deny !== undefined ? true : ran.isError === true
-    // Answered, approved or denied (here or on another surface): no longer waiting.
-    // The summary on screen too, for a call still pending when the phone came back.
-    await update($, away, held =>
-      held === null ? null : { ...held, waiting: held.waiting.filter(item => item.id !== e.tool_use_id) },
-    )
-    await update($, summary, shown =>
-      shown === null ? null : { ...shown, waiting: shown.waiting.filter(item => item.id !== e.tool_use_id) },
-    )
+    // Finished, answered, approved or denied (here or on another surface): no longer
+    // running and no longer waiting on you.
+    if (isMainLoop) await update($, steps, list => list.filter(one => one.id !== id))
+    await update($, pending, list => list.filter(one => one.id !== id))
+    const isDenied = 'deny' in ran && ran.deny !== undefined
+    if (isDenied) return ran
+    const isFailed = ran.isError === true
 
     const command = field(input, 'command')
     if (e.tool === 'Bash' && command !== undefined && isTestCommand(command)) {
@@ -225,6 +231,7 @@ export const register: Register = on => {
     const { Box, Text, Button } = $.ui.resolve(e)
     const seen = await read($, summary)
     if (seen === null) return <Text dimColor>Nothing happened while you were away.</Text>
+    const waiting = await read($, pending)
     const isWide = e.props.bodyColumns >= BREAKPOINT
     const latestTest = seen.tests[seen.tests.length - 1]
     const shown = seen.changed.slice(isWide ? -10 : -4)
@@ -240,10 +247,10 @@ export const register: Register = on => {
         {latestTest !== undefined && (
           <Text color={latestTest.isPassing ? 'green' : 'red'}>{testLine(latestTest)}</Text>
         )}
-        {seen.waiting.length > 0 && (
+        {waiting.length > 0 && (
           <Box key="waiting" flexDirection="column" borderStyle="round" paddingX="sm">
             <Text bold>Waiting on you</Text>
-            {seen.waiting.map(item => (
+            {waiting.map(item => (
               <Text key={item.id} wrap="truncate-end">
                 {item.text}
               </Text>
@@ -295,7 +302,7 @@ export const register: Register = on => {
     const columns = e.props.bodyColumns
     const isWide = columns >= BREAKPOINT
     const startedAt = await read($, turnStartedAt)
-    const current = await read($, step)
+    const current = (await read($, steps)).slice(-1)[0]?.text
     const test = await read($, lastTest)
     const meters = await read($, gauges)
     const at = await read($, now)

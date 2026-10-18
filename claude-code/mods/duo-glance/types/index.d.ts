@@ -1,7 +1,7 @@
 export type TestRun = { command: string; isPassing: boolean; passed: number | null; failed: number | null }
 
-// Something that needed you, keyed by the tool call that raised it.
-export type Waiting = { id: string; text: string }
+// One line about a tool call, keyed by its id: something waiting on you, or a step in progress.
+export type CallLine = { id: string; text: string }
 
 export type Away = {
   since: number
@@ -9,7 +9,6 @@ export type Away = {
   changed: string[]
   tests: TestRun[]
   errors: number
-  waiting: Waiting[]
 }
 
 export type Gauges = { contextPercent: number | null; ratePercent: number | null; costUsd: number | null }
@@ -20,7 +19,10 @@ declare module 'claude-code' {
       isPhone: boolean
       away: Away | null
       summary: (Away & { until: number }) | null
-      step: string | null
+      // Approvals and questions still open, kept whether or not the phone is away.
+      pending: CallLine[]
+      // Main-loop tool calls running now, oldest first.
+      steps: CallLine[]
       turnStartedAt: number | null
       lastTest: TestRun | null
       gauges: Gauges
