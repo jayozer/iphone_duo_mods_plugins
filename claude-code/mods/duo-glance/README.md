@@ -28,7 +28,7 @@ At the prompt of a terminal session:
 /plugin install duo-glance --marketplace jayozer/iphone_duo_mods_plugins
 ```
 
-To try it from a clone, run `claude --plugin-dir claude-code/mods/duo-glance --remote-control` and open the session from the Claude app on your phone. Run `claude plugin test claude-code/mods/duo-glance` for the tests (4 tests).
+To try it from a clone, run `claude --plugin-dir claude-code/mods/duo-glance --remote-control` and open the session from the Claude app on your phone. Run `claude plugin test claude-code/mods/duo-glance` for the tests (5 tests).
 
 ## Known limits
 - The mod can't tell when the phone is half-folded, so you open the monitor yourself.

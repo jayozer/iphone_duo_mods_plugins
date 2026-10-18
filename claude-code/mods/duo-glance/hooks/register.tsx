@@ -175,8 +175,8 @@ export const register: Register = on => {
   on('tool.check', async ($, e, next) => {
     const verdict = await next(e)
     if (verdict.decision === 'ask' && e.tool_use_id !== undefined && (await read($, away)) !== null) {
-      const what = `Approve ${describeCall(e.tool, e.input)}`
-      await update($, away, held => (held === null ? null : { ...held, waiting: [...held.waiting, what] }))
+      const item = { id: e.tool_use_id, text: `Approve ${describeCall(e.tool, e.input)}` }
+      await update($, away, held => (held === null ? null : { ...held, waiting: [...held.waiting, item] }))
       await notifyAway($, `Waiting for your OK: ${describeCall(e.tool, e.input)}`)
     }
 
@@ -187,15 +187,16 @@ export const register: Register = on => {
     const input = callInput(e)
     if (e.agentId === undefined) await update($, step, () => describeCall(e.tool, input))
     if (e.tool === 'AskUserQuestion' && (await read($, away)) !== null) {
-      const question = firstQuestion(input)
-      await update($, away, held => (held === null ? null : { ...held, waiting: [...held.waiting, question] }))
-      await notifyAway($, question)
+      const item = { id: e.tool_use_id, text: firstQuestion(input) }
+      await update($, away, held => (held === null ? null : { ...held, waiting: [...held.waiting, item] }))
+      await notifyAway($, item.text)
     }
     const ran = await next(e)
     const isFailed = 'deny' in ran && ran.deny !== undefined ? true : ran.isError === true
-    if (e.tool === 'AskUserQuestion') {
-      await update($, away, held => (held === null ? null : { ...held, waiting: held.waiting.slice(0, -1) }))
-    }
+    // Answered, approved or denied (here or on another surface): no longer waiting.
+    await update($, away, held =>
+      held === null ? null : { ...held, waiting: held.waiting.filter(item => item.id !== e.tool_use_id) },
+    )
 
     const command = field(input, 'command')
     if (e.tool === 'Bash' && command !== undefined && isTestCommand(command)) {
@@ -238,9 +239,9 @@ export const register: Register = on => {
         {seen.waiting.length > 0 && (
           <Box key="waiting" flexDirection="column" borderStyle="round" paddingX="sm">
             <Text bold>Waiting on you</Text>
-            {seen.waiting.map((item, index) => (
-              <Text key={`wait-${index}`} wrap="truncate-end">
-                {item}
+            {seen.waiting.map(item => (
+              <Text key={item.id} wrap="truncate-end">
+                {item.text}
               </Text>
             ))}
           </Box>

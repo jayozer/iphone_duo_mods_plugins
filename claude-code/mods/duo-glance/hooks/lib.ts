@@ -13,9 +13,18 @@ const count = (text: string, pattern: RegExp): number | null => {
   return total
 }
 
+// Count from the runner's test summary line when it prints one (Jest's `Tests:`), so suite
+// totals (`Test Suites: 1 passed`) are not added in; otherwise from every line but suite lines.
+const countedText = (output: string) => {
+  const lines = output.split('\n')
+  const summary = lines.filter(line => /^\s*Tests?:/i.test(line))
+  return (summary.length > 0 ? summary : lines.filter(line => !/\bsuites?\b/i.test(line))).join('\n')
+}
+
 export const readTestRun = (command: string, output: string, isError: boolean): TestRun => {
-  const passed = count(output, /(\d+)\s+(?:pass(?:ed|ing)?|✓)/gi)
-  const failed = count(output, /(\d+)\s+(?:fail(?:ed|ing|ures?)?|✗)/gi)
+  const text = countedText(output)
+  const passed = count(text, /(\d+)\s+(?:pass(?:ed|ing)?|✓)/gi)
+  const failed = count(text, /(\d+)\s+(?:fail(?:ed|ing|ures?)?|✗)/gi)
   return { command, isPassing: !isError && (failed ?? 0) === 0, passed, failed }
 }
 

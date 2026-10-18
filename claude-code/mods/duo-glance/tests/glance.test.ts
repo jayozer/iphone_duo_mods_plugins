@@ -70,6 +70,22 @@ test('coming back to the phone shows what happened while away', async ($, on) =>
   await ui.unmount()
 })
 
+test('a question answered while away is no longer listed as waiting', async ($, on) => {
+  const opened: string[] = []
+  engine(on, opened)
+  await $.session.attach(phone)
+  await $.session.detach({ ...phone, reason: 'detached' } as never)
+  await $.turn.start({ text: 'plan it', turnId: 'turn-1' } as never)
+  await $.tool.call({ tool: 'AskUserQuestion', input: { questions: [{ question: 'Which database?' }] } } as never)
+  await $.turn.complete({ answer: 'done', durationMs: 1000, isAborted: false, turnId: 'turn-1' } as never)
+  await $.session.attach(phone)
+
+  const ui = await $.ui.mount(pane('duo-away', 40))
+  expect(await ui.find({ text: '1 turn finished' })).toBeDefined()
+  expect(await ui.find({ text: 'Waiting on you' })).toBeUndefined()
+  await ui.unmount()
+})
+
 test('a quiet absence opens no summary', async ($, on) => {
   const opened: string[] = []
   engine(on, opened)
@@ -113,4 +129,6 @@ test('test output is read for pass and fail counts', () => {
     failed: 2,
   })
   expect(readTestRun('pytest', '12 passed in 0.4s', false).isPassing).toBe(true)
+  const jest = 'Test Suites: 1 failed, 2 passed, 3 total\nTests:       1 failed, 9 passed, 10 total'
+  expect(readTestRun('npx jest', jest, true)).toMatchObject({ passed: 9, failed: 1 })
 })

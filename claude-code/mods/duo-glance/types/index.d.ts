@@ -1,12 +1,15 @@
 export type TestRun = { command: string; isPassing: boolean; passed: number | null; failed: number | null }
 
+// Something that needed you, keyed by the tool call that raised it.
+export type Waiting = { id: string; text: string }
+
 export type Away = {
   since: number
   turns: number
   changed: string[]
   tests: TestRun[]
   errors: number
-  waiting: string[]
+  waiting: Waiting[]
 }
 
 export type Gauges = { contextPercent: number | null; ratePercent: number | null; costUsd: number | null }
