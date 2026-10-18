@@ -4,6 +4,8 @@ import { expect, mock, test } from 'claude-code/testing'
 import { readTestRun } from '../hooks/lib'
 
 // Stands in for the engine beneath the plugin: a phone that comes and goes, panes, usage.
+const midQuestion: { run?: () => Promise<void> } = {}
+
 const engine = (on: On, opened: string[]) => {
   let surfaces: ('mobile' | 'terminal')[] = []
   on('session.attach', (_$, e) => {
@@ -25,11 +27,13 @@ const engine = (on: On, opened: string[]) => {
   on('ui.close', () => ({ value: undefined }))
   on('turn.start', (_$, e) => ({ turnId: e.turnId }))
   on('turn.complete', (_$, e) => ({ text: e.answer }) as never)
-  on('tool.call', (_$, e) =>
-    e.tool === 'Bash'
+  on('tool.call', async (_$, e) => {
+    // The phone comes back while the question is still open, then the person answers it.
+    if (e.tool === 'AskUserQuestion') await midQuestion.run?.()
+    return e.tool === 'Bash'
       ? ({ result: { stdout: 'Tests: 2 failed, 9 passed', stderr: '', interrupted: false }, isError: true } as never)
-      : ({ result: { filePath: '/repo/src/app.ts' } } as never),
-  )
+      : ({ result: { filePath: '/repo/src/app.ts' } } as never)
+  })
   mock.store(on)
   mock.clock(on)
 }
@@ -83,6 +87,27 @@ test('a question answered while away is no longer listed as waiting', async ($, 
   const ui = await $.ui.mount(pane('duo-away', 40))
   expect(await ui.find({ text: '1 turn finished' })).toBeDefined()
   expect(await ui.find({ text: 'Waiting on you' })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('a question answered after the phone came back leaves the summary', async ($, on) => {
+  const opened: string[] = []
+  engine(on, opened)
+  let isShownWhileOpen = false
+  midQuestion.run = async () => {
+    await $.session.attach(phone)
+    const open = await $.ui.mount(pane('duo-away', 40))
+    isShownWhileOpen = (await open.find({ text: 'Which database?' })) !== undefined
+    await open.unmount()
+  }
+  await $.session.attach(phone)
+  await $.session.detach({ ...phone, reason: 'detached' } as never)
+  await $.tool.call({ tool: 'AskUserQuestion', input: { questions: [{ question: 'Which database?' }] } } as never)
+  midQuestion.run = undefined
+  expect(isShownWhileOpen).toBe(true)
+
+  const ui = await $.ui.mount(pane('duo-away', 40))
+  expect(await ui.find({ text: 'Which database?' })).toBeUndefined()
   await ui.unmount()
 })
 

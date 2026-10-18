@@ -194,8 +194,12 @@ export const register: Register = on => {
     const ran = await next(e)
     const isFailed = 'deny' in ran && ran.deny !== undefined ? true : ran.isError === true
     // Answered, approved or denied (here or on another surface): no longer waiting.
+    // The summary on screen too, for a call still pending when the phone came back.
     await update($, away, held =>
       held === null ? null : { ...held, waiting: held.waiting.filter(item => item.id !== e.tool_use_id) },
+    )
+    await update($, summary, shown =>
+      shown === null ? null : { ...shown, waiting: shown.waiting.filter(item => item.id !== e.tool_use_id) },
     )
 
     const command = field(input, 'command')
