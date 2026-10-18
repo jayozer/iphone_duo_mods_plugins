@@ -6,6 +6,7 @@ import {
   BREAKPOINT,
   baseName,
   callInput,
+  changedBetween,
   clock,
   describeCall,
   duration,
@@ -76,12 +77,28 @@ const readDirty = async ($: EngineInterface): Promise<string[] | null> => {
   }
 }
 
+// Each changed file in the tree, marked by size and mtime ('gone' once deleted), so a
+// further edit to a file that was already changed still shows.
+const readTree = async ($: EngineInterface): Promise<Map<string, string> | null> => {
+  const dirty = await readDirty($)
+  if (dirty === null) return null
+  const marks = await Promise.all(
+    dirty.slice(0, 200).map(async path => {
+      try {
+        const stat = await $.fs.stat(path)
+        return [path, `${stat.size}:${stat.mtimeMs}`] as const
+      } catch {
+        return [path, 'gone'] as const
+      }
+    }),
+  )
+  return new Map(marks)
+}
+
 const leave = async ($: EngineInterface) => {
   const since = await $.clock.now()
   await update($, isPhone, () => false)
-  if ((await read($, away)) !== null) return
-  const dirty = (await readDirty($)) ?? []
-  await update($, away, current => current ?? emptyAway(since, dirty))
+  await update($, away, current => current ?? emptyAway(since))
 }
 
 const notifyAway = async ($: EngineInterface, text: string) => {
@@ -213,6 +230,8 @@ export const register: Register = on => {
     const input = callInput(e)
     const id = e.tool_use_id
     const isMainLoop = e.agentId === undefined
+    // A shell command can change files too (sed -i, a formatter, a generator): ask git around it.
+    const treeBefore = e.tool === 'Bash' && (await read($, away)) !== null ? await readTree($) : null
     if (isMainLoop) await update($, steps, list => [...list, { id, text: describeCall(e.tool, input) }])
     if (e.tool === 'AskUserQuestion') {
       const item = { id, text: firstQuestion(input) }
@@ -243,16 +262,14 @@ export const register: Register = on => {
         held === null || held.changed.includes(path) ? held : { ...held, changed: [...held.changed, path] },
       )
     }
-    // A shell command can change files too (sed -i, a formatter, a generator): ask git.
-    if (e.tool === 'Bash' && (await read($, away)) !== null) {
-      const dirty = await readDirty($)
-      if (dirty !== null) {
-        await update($, away, held => {
-          if (held === null) return null
-          const added = dirty.filter(one => !held.dirtyAtLeave.includes(one) && !held.changed.includes(one))
-          return added.length === 0 ? held : { ...held, changed: [...held.changed, ...added] }
-        })
-      }
+    const treeAfter = treeBefore === null ? null : await readTree($)
+    if (treeBefore !== null && treeAfter !== null) {
+      const touched = changedBetween(treeBefore, treeAfter)
+      await update($, away, held => {
+        if (held === null) return null
+        const added = touched.filter(one => !held.changed.includes(one))
+        return added.length === 0 ? held : { ...held, changed: [...held.changed, ...added] }
+      })
     }
 
     return ran

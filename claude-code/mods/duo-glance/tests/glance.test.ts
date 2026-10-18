@@ -6,8 +6,8 @@ import { callInput, field, readTestRun } from '../hooks/lib'
 // Stands in for the engine beneath the plugin: a phone that comes and goes, panes, usage.
 const midQuestion: { run?: () => Promise<void> } = {}
 const bash: { isDenied: boolean } = { isDenied: false }
-// The checkout at /repo: what `git status` lists as changed.
-const tree: { dirty: string[] } = { dirty: [] }
+// The checkout at /repo: each changed file and its mtime.
+const tree: { files: Record<string, number> } = { files: {} }
 
 const submitted: string[] = []
 
@@ -31,7 +31,16 @@ const engine = (on: On, opened: string[]) => {
       value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false },
     })
     if (e.argv[1] === 'rev-parse') return out('/repo\n')
-    return out(tree.dirty.map(path => ` M ${path}\0`).join(''))
+    return out(
+      Object.keys(tree.files)
+        .map(path => ` M ${path}\0`)
+        .join(''),
+    )
+  })
+  on('fs.stat', (_$, e) => {
+    const mtimeMs = tree.files[e.path.replace('/repo/', '')]
+    if (mtimeMs === undefined) throw new Error('ENOENT')
+    return { value: { kind: 'file', size: 10, mtimeMs, isLink: false } } as never
   })
   on('session.usage', () => ({
     value: { startedAt: 0, context: { window: 200_000, percent: 42 }, rateLimits: [{ kind: 'five_hour', percentUsed: 30 }] },
@@ -48,7 +57,8 @@ const engine = (on: On, opened: string[]) => {
     if (e.tool === 'AskUserQuestion') await midQuestion.run?.()
     if (e.tool === 'Bash' && bash.isDenied) return { deny: 'Denied by a plugin' } as never
     const command = field(callInput(e), 'command') ?? ''
-    if (command.startsWith('npm run gen')) tree.dirty.push('src/gen.ts')
+    if (command.startsWith('npm run gen')) tree.files['src/gen.ts'] = 1
+    if (command.startsWith('npm run format')) tree.files['notes.md'] = (tree.files['notes.md'] ?? 0) + 1
     return e.tool === 'Bash'
       ? ({ result: { stdout: 'Tests: 2 failed, 9 passed', stderr: '', interrupted: false }, isError: true } as never)
       : ({ result: { filePath: '/repo/src/app.ts' } } as never)
@@ -213,18 +223,20 @@ test('the monitor drops a step once its tool finishes', async ($, on) => {
   await ui.unmount()
 })
 
-test('files a shell command changed while away are listed, not ones already changed', async ($, on) => {
+test('files a shell command changed while away are listed, already-changed ones only if touched', async ($, on) => {
   const opened: string[] = []
   engine(on, opened)
-  tree.dirty = ['notes.md']
+  tree.files = { 'notes.md': 1, 'old.md': 1 }
   await $.session.attach(phone)
   await $.session.detach({ ...phone, reason: 'detached' } as never)
   await $.tool.call({ tool: 'Bash', input: { command: 'npm run gen' } } as never)
+  await $.tool.call({ tool: 'Bash', input: { command: 'npm run format' } } as never)
   await $.session.attach(phone)
-  tree.dirty = []
+  tree.files = {}
 
   const ui = await $.ui.mount(pane('duo-away', 40))
   expect(await ui.find({ text: 'gen.ts' })).toBeDefined()
-  expect(await ui.find({ text: 'notes.md' })).toBeUndefined()
+  expect(await ui.find({ text: 'notes.md' })).toBeDefined()
+  expect(await ui.find({ text: 'old.md' })).toBeUndefined()
   await ui.unmount()
 })

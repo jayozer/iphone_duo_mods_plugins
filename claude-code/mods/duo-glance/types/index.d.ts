@@ -9,8 +9,6 @@ export type Away = {
   changed: string[]
   tests: TestRun[]
   errors: number
-  // Paths the working tree already showed changed when you left, so shell edits are told apart.
-  dirtyAtLeave: string[]
 }
 
 export type Gauges = { contextPercent: number | null; ratePercent: number | null; costUsd: number | null }
