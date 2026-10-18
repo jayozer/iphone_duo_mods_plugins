@@ -273,3 +273,25 @@ test('a shell command that commits, or started before the phone left, still coun
   expect(await ui.find({ text: 'version.ts' })).toBeDefined()
   await ui.unmount()
 })
+
+test('files a running shell command wrote before the phone came back are counted', async ($, on) => {
+  const opened: string[] = []
+  engine(on, opened)
+  tree.files = {}
+  tree.head = 'a'
+  tree.committed = []
+  await $.session.attach(phone)
+  await $.session.detach({ ...phone, reason: 'detached' } as never)
+  midBash.run = async () => {
+    tree.files['src/early.ts'] = 1
+    await $.session.attach(phone)
+  }
+  await $.tool.call({ tool: 'Bash', input: { command: 'npm run long' } } as never)
+  midBash.run = undefined
+  tree.files = {}
+
+  expect(opened).toContain('duo-away')
+  const ui = await $.ui.mount(pane('duo-away', 40))
+  expect(await ui.find({ text: 'early.ts' })).toBeDefined()
+  await ui.unmount()
+})

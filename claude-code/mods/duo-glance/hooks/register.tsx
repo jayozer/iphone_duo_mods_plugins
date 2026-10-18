@@ -119,6 +119,8 @@ const notifyAway = async ($: EngineInterface, text: string) => {
 }
 
 export const register: Register = on => {
+  let shellsRunning = 0
+
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'glance',
@@ -144,7 +146,13 @@ export const register: Register = on => {
   on('session.attach', { surface: 'mobile' }, async ($, e, next) => {
     const result = await next(e)
     await update($, isPhone, () => true)
-    const held = await read($, away)
+    let held = await read($, away)
+    // A shell command still running may already have written files: count them now,
+    // since once the absence ends its own check finds nothing to add to.
+    if (held?.tree && shellsRunning > 0) {
+      const touched = await changedSince($, held.tree)
+      held = { ...held, changed: [...new Set([...held.changed, ...touched])] }
+    }
     await update($, away, () => null)
     if (held !== null && (hasNews(held) || (await read($, pending)).length > 0)) {
       const until = await $.clock.now()
@@ -248,7 +256,11 @@ export const register: Register = on => {
       await update($, pending, list => [...list, item])
       await notifyAway($, item.text)
     }
-    const ran = await next(e)
+    const isShell = e.tool === 'Bash'
+    if (isShell) shellsRunning++
+    const ran = await next(e).finally(() => {
+      if (isShell) shellsRunning--
+    })
     // Finished, answered, approved or denied (here or on another surface): no longer
     // running and no longer waiting on you.
     if (isMainLoop) await update($, steps, list => list.filter(one => one.id !== id))
