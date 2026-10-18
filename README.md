@@ -19,6 +19,7 @@ scripts/check.sh                  validates and tests every Claude Code entry
 | Name | For | What it does |
 | --- | --- | --- |
 | [duo](claude-code/mods/duo) | Claude Code | Phone mode: a fold-aware pane, one-tap prompts, thumb approvals, compact tool rows |
+| [duo-glance](claude-code/mods/duo-glance) | Claude Code | A summary of what happened while you were away, and a desk monitor for the half-folded phone |
 | [duo-phone-style](codex/skills/duo-phone-style) | Codex | Short, narrow replies for reading on the phone |
 
 ## Install
@@ -27,6 +28,7 @@ scripts/check.sh                  validates and tests every Claude Code entry
 
 ```
 /plugin install duo --marketplace jayozer/iphone_duo_mods_plugins
+/plugin install duo-glance --marketplace jayozer/iphone_duo_mods_plugins
 ```
 
 Or from a shell, `claude plugin install duo --marketplace jayozer/iphone_duo_mods_plugins`. Answer `y` to add the marketplace, then pick a scope. To try a mod straight from a clone, run `claude --plugin-dir claude-code/mods/duo`.

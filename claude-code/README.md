@@ -16,3 +16,4 @@ While developing, run `claude --plugin-dir claude-code/mods/<name>` to load it f
 
 ## Contents
 - `mods/duo`: phone mode for the iPhone Duo. See [its README](mods/duo/README.md).
+- `mods/duo-glance`: an away summary and a desk monitor. See [its README](mods/duo-glance/README.md).
