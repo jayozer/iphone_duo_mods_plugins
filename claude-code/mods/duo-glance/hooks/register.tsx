@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { Gauges } from '../types'
+import type { Gauges, TreeSnapshot } from '../types'
 import {
   BREAKPOINT,
   baseName,
@@ -60,45 +60,57 @@ function readGauges(usage: {
   }
 }
 
-// The phone left: start counting what happens until it comes back.
-// The working tree's changed files by absolute path, or null outside a git checkout.
-const readDirty = async ($: EngineInterface): Promise<string[] | null> => {
+const git = async ($: EngineInterface, args: string[], cwd?: string) => {
+  const ran = await $.process.run(['git', ...args], { cwd, timeoutMs: 4000 })
+  return ran.exitCode === 0 ? ran.stdout : null
+}
+
+// The checkout now, or null outside a git checkout (or where commands can't run).
+const readTree = async ($: EngineInterface): Promise<TreeSnapshot | null> => {
   try {
-    const top = await $.process.run(['git', 'rev-parse', '--show-toplevel'], { timeoutMs: 2000 })
-    if (top.exitCode !== 0) return null
-    const root = top.stdout.trim()
-    const status = await $.process.run(['git', 'status', '--porcelain', '-z', '--untracked-files=all'], {
-      cwd: root,
-      timeoutMs: 4000,
-    })
-    return status.exitCode === 0 ? dirtyPaths(status.stdout).map(path => `${root}/${path}`) : null
+    const top = await git($, ['rev-parse', '--show-toplevel'])
+    if (top === null) return null
+    const root = top.trim()
+    const status = await git($, ['status', '--porcelain', '-z', '--untracked-files=all'], root)
+    if (status === null) return null
+    const head = (await git($, ['rev-parse', 'HEAD'], root))?.trim() ?? null
+    const marks = await Promise.all(
+      dirtyPaths(status).map(async relative => {
+        const path = `${root}/${relative}`
+        try {
+          const stat = await $.fs.stat(path)
+          return [path, `${stat.size}:${stat.mtimeMs}`] as const
+        } catch {
+          return [path, 'gone'] as const
+        }
+      }),
+    )
+    return { root, head, marks: Object.fromEntries(marks) }
   } catch {
     return null
   }
 }
 
-// Each changed file in the tree, marked by size and mtime ('gone' once deleted), so a
-// further edit to a file that was already changed still shows.
-const readTree = async ($: EngineInterface): Promise<Map<string, string> | null> => {
-  const dirty = await readDirty($)
-  if (dirty === null) return null
-  const marks = await Promise.all(
-    dirty.slice(0, 200).map(async path => {
-      try {
-        const stat = await $.fs.stat(path)
-        return [path, `${stat.size}:${stat.mtimeMs}`] as const
-      } catch {
-        return [path, 'gone'] as const
-      }
-    }),
-  )
-  return new Map(marks)
+// Files that differ from the checkout as the phone left it: changed in the tree since,
+// or moved by a commit, checkout or reset (which can leave the tree clean).
+const changedSince = async ($: EngineInterface, then: TreeSnapshot): Promise<string[]> => {
+  const current = await readTree($)
+  if (current === null || current.root !== then.root) return []
+  const paths = changedBetween(then.marks, current.marks)
+  if (then.head !== null && current.head !== null && then.head !== current.head) {
+    const moved = await git($, ['diff', '--name-only', '-z', then.head, current.head], then.root).catch(() => null)
+    for (const relative of (moved ?? '').split('\0').filter(Boolean)) paths.push(`${then.root}/${relative}`)
+  }
+  return [...new Set(paths)]
 }
 
+// The phone left: start counting what happens until it comes back.
 const leave = async ($: EngineInterface) => {
   const since = await $.clock.now()
   await update($, isPhone, () => false)
-  await update($, away, current => current ?? emptyAway(since))
+  if ((await read($, away)) !== null) return
+  const tree = await readTree($)
+  await update($, away, current => current ?? emptyAway(since, tree))
 }
 
 const notifyAway = async ($: EngineInterface, text: string) => {
@@ -230,8 +242,6 @@ export const register: Register = on => {
     const input = callInput(e)
     const id = e.tool_use_id
     const isMainLoop = e.agentId === undefined
-    // A shell command can change files too (sed -i, a formatter, a generator): ask git around it.
-    const treeBefore = e.tool === 'Bash' && (await read($, away)) !== null ? await readTree($) : null
     if (isMainLoop) await update($, steps, list => [...list, { id, text: describeCall(e.tool, input) }])
     if (e.tool === 'AskUserQuestion') {
       const item = { id, text: firstQuestion(input) }
@@ -262,9 +272,11 @@ export const register: Register = on => {
         held === null || held.changed.includes(path) ? held : { ...held, changed: [...held.changed, path] },
       )
     }
-    const treeAfter = treeBefore === null ? null : await readTree($)
-    if (treeBefore !== null && treeAfter !== null) {
-      const touched = changedBetween(treeBefore, treeAfter)
+    // A shell command can change files too (sed -i, a formatter, a generator, a commit):
+    // compare the checkout with how it was when the phone left, whenever the call began.
+    const then = e.tool === 'Bash' ? (await read($, away))?.tree : null
+    if (then !== null && then !== undefined) {
+      const touched = await changedSince($, then)
       await update($, away, held => {
         if (held === null) return null
         const added = touched.filter(one => !held.changed.includes(one))

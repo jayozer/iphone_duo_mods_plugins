@@ -1,4 +1,4 @@
-import type { Away, TestRun } from '../types'
+import type { Away, TestRun, TreeSnapshot } from '../types'
 
 // Below this many columns the phone is folded; above it, unfolded.
 export const BREAKPOINT = 56
@@ -65,7 +65,14 @@ export const outputText = (result: unknown): string => {
   return [field(result, 'stdout'), field(result, 'stderr')].filter(Boolean).join('\n')
 }
 
-export const emptyAway = (since: number): Away => ({ since, turns: 0, changed: [], tests: [], errors: 0 })
+export const emptyAway = (since: number, tree: TreeSnapshot | null = null): Away => ({
+  since,
+  turns: 0,
+  changed: [],
+  tests: [],
+  errors: 0,
+  tree,
+})
 
 // `git status --porcelain -z` entries as repo-relative paths; a rename or copy carries its old name next.
 export const dirtyPaths = (porcelain: string): string[] => {
@@ -92,9 +99,10 @@ export const reviewPrompt = (changed: readonly string[], awayMs: number) => {
   return `${head} You changed these files in that time:\n${listed.join('\n')}\nSummarize the change to each in one short bullet, ${ask}`
 }
 
-// Paths whose mark differs between two snapshots of the tree, including ones in only one.
-export const changedBetween = (before: ReadonlyMap<string, string>, after: ReadonlyMap<string, string>) =>
-  [...new Set([...before.keys(), ...after.keys()])].filter(path => before.get(path) !== after.get(path))
+// Paths whose mark differs between two snapshots, including ones in only one: a file that
+// was changed and then committed or reverted counts as well as a newly changed one.
+export const changedBetween = (before: Record<string, string>, after: Record<string, string>) =>
+  [...new Set([...Object.keys(before), ...Object.keys(after)])].filter(path => before[path] !== after[path])
 
 export const duration = (ms: number) => {
   const minutes = Math.max(0, Math.round(ms / 60_000))

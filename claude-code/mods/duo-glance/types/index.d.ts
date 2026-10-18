@@ -3,12 +3,16 @@ export type TestRun = { command: string; isPassing: boolean; passed: number | nu
 // One line about a tool call, keyed by its id: something waiting on you, or a step in progress.
 export type CallLine = { id: string; text: string }
 
+// The checkout when the phone left: HEAD, and each changed file marked by size and mtime.
+export type TreeSnapshot = { root: string; head: string | null; marks: Record<string, string> }
+
 export type Away = {
   since: number
   turns: number
   changed: string[]
   tests: TestRun[]
   errors: number
+  tree: TreeSnapshot | null
 }
 
 export type Gauges = { contextPercent: number | null; ratePercent: number | null; costUsd: number | null }

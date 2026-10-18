@@ -6,8 +6,9 @@ import { callInput, field, readTestRun } from '../hooks/lib'
 // Stands in for the engine beneath the plugin: a phone that comes and goes, panes, usage.
 const midQuestion: { run?: () => Promise<void> } = {}
 const bash: { isDenied: boolean } = { isDenied: false }
-// The checkout at /repo: each changed file and its mtime.
-const tree: { files: Record<string, number> } = { files: {} }
+// The checkout at /repo: HEAD, the files the last commit moved, each changed file and its mtime.
+const tree: { head: string; committed: string[]; files: Record<string, number> } = { head: 'a', committed: [], files: {} }
+const midBash: { run?: () => Promise<void> } = {}
 
 const submitted: string[] = []
 
@@ -30,7 +31,8 @@ const engine = (on: On, opened: string[]) => {
     const out = (stdout: string) => ({
       value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false },
     })
-    if (e.argv[1] === 'rev-parse') return out('/repo\n')
+    if (e.argv[1] === 'rev-parse') return out(e.argv[2] === 'HEAD' ? `${tree.head}\n` : '/repo\n')
+    if (e.argv[1] === 'diff') return out(tree.committed.map(path => `${path}\0`).join(''))
     return out(
       Object.keys(tree.files)
         .map(path => ` M ${path}\0`)
@@ -58,6 +60,12 @@ const engine = (on: On, opened: string[]) => {
     if (e.tool === 'Bash' && bash.isDenied) return { deny: 'Denied by a plugin' } as never
     const command = field(callInput(e), 'command') ?? ''
     if (command.startsWith('npm run gen')) tree.files['src/gen.ts'] = 1
+    if (command.startsWith('npm run release')) {
+      // Edits and commits: the tree ends clean on a new HEAD.
+      tree.head = 'b'
+      tree.committed = ['src/version.ts']
+    }
+    if (command.startsWith('npm run long')) await midBash.run?.()
     if (command.startsWith('npm run format')) tree.files['notes.md'] = (tree.files['notes.md'] ?? 0) + 1
     return e.tool === 'Bash'
       ? ({ result: { stdout: 'Tests: 2 failed, 9 passed', stderr: '', interrupted: false }, isError: true } as never)
@@ -238,5 +246,30 @@ test('files a shell command changed while away are listed, already-changed ones 
   expect(await ui.find({ text: 'gen.ts' })).toBeDefined()
   expect(await ui.find({ text: 'notes.md' })).toBeDefined()
   expect(await ui.find({ text: 'old.md' })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('a shell command that commits, or started before the phone left, still counts', async ($, on) => {
+  const opened: string[] = []
+  engine(on, opened)
+  tree.files = {}
+  tree.head = 'a'
+  tree.committed = []
+  await $.session.attach(phone)
+  midBash.run = async () => {
+    await $.session.detach({ ...phone, reason: 'detached' } as never)
+    tree.files['src/late.ts'] = 1
+  }
+  await $.tool.call({ tool: 'Bash', input: { command: 'npm run long' } } as never)
+  midBash.run = undefined
+  await $.tool.call({ tool: 'Bash', input: { command: 'npm run release' } } as never)
+  await $.session.attach(phone)
+  tree.files = {}
+  tree.head = 'a'
+  tree.committed = []
+
+  const ui = await $.ui.mount(pane('duo-away', 40))
+  expect(await ui.find({ text: 'late.ts' })).toBeDefined()
+  expect(await ui.find({ text: 'version.ts' })).toBeDefined()
   await ui.unmount()
 })
