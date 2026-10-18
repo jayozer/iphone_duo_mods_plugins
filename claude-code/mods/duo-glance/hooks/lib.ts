@@ -65,7 +65,8 @@ export const outputText = (result: unknown): string => {
   return [field(result, 'stdout'), field(result, 'stderr')].filter(Boolean).join('\n')
 }
 
-export const emptyAway = (since: number, tree: TreeSnapshot | null = null): Away => ({
+export const emptyAway = (since: number, id = 0, tree: TreeSnapshot | null = null): Away => ({
+  id,
   since,
   turns: 0,
   changed: [],

@@ -7,6 +7,8 @@ export type CallLine = { id: string; text: string }
 export type TreeSnapshot = { root: string; head: string | null; marks: Record<string, string> }
 
 export type Away = {
+  // Which departure opened it, so a reconnect closes only the absence it saw.
+  id: number
   since: number
   turns: number
   changed: string[]

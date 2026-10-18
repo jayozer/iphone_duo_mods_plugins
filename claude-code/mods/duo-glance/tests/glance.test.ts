@@ -7,7 +7,12 @@ import { callInput, field, readTestRun } from '../hooks/lib'
 const midQuestion: { run?: () => Promise<void> } = {}
 const bash: { isDenied: boolean } = { isDenied: false }
 // The checkout at /repo: HEAD, the files the last commit moved, each changed file and its mtime.
-const tree: { head: string; committed: string[]; files: Record<string, number> } = { head: 'a', committed: [], files: {} }
+const tree: {
+  head: string
+  committed: string[]
+  files: Record<string, number>
+  onStatus?: () => Promise<void>
+} = { head: 'a', committed: [], files: {} }
 const midBash: { run?: () => Promise<void> } = {}
 
 const submitted: string[] = []
@@ -27,11 +32,12 @@ const engine = (on: On, opened: string[]) => {
     return { clientId: e.clientId }
   })
   on('session.surfaces', () => ({ value: surfaces }))
-  on('process.run', (_$, e) => {
+  on('process.run', async (_$, e) => {
     const out = (stdout: string) => ({
       value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false },
     })
     if (e.argv[1] === 'rev-parse') return out(e.argv[2] === 'HEAD' ? `${tree.head}\n` : '/repo\n')
+    if (e.argv[1] === 'status') await tree.onStatus?.()
     if (e.argv[1] === 'diff') return out(tree.committed.map(path => `${path}\0`).join(''))
     return out(
       Object.keys(tree.files)
@@ -293,5 +299,33 @@ test('files a running shell command wrote before the phone came back are counted
   expect(opened).toContain('duo-away')
   const ui = await $.ui.mount(pane('duo-away', 40))
   expect(await ui.find({ text: 'early.ts' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('leaving again while a reconnect is still checking the checkout keeps the absence going', async ($, on) => {
+  const opened: string[] = []
+  engine(on, opened)
+  tree.files = {}
+  tree.head = 'a'
+  tree.committed = []
+  await $.session.attach(phone)
+  await $.session.detach({ ...phone, reason: 'detached' } as never)
+  midBash.run = async () => {
+    tree.files['src/a.ts'] = 1
+    tree.onStatus = async () => {
+      tree.onStatus = undefined
+      await $.session.detach({ ...phone, reason: 'detached' } as never)
+    }
+    await $.session.attach(phone)
+  }
+  await $.tool.call({ tool: 'Bash', input: { command: 'npm run long' } } as never)
+  midBash.run = undefined
+  expect(opened).not.toContain('duo-away')
+
+  await $.session.attach(phone)
+  tree.files = {}
+  expect(opened).toContain('duo-away')
+  const ui = await $.ui.mount(pane('duo-away', 40))
+  expect(await ui.find({ text: 'a.ts' })).toBeDefined()
   await ui.unmount()
 })

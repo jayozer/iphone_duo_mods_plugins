@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { Gauges, TreeSnapshot } from '../types'
+import type { Away, Gauges, TreeSnapshot } from '../types'
 import {
   BREAKPOINT,
   baseName,
@@ -104,13 +104,25 @@ const changedSince = async ($: EngineInterface, then: TreeSnapshot): Promise<str
   return [...new Set(paths)]
 }
 
+// How many times the phone has left; a reconnect that sees this change mid-way leaves the
+// absence open.
+let departures = 0
+
 // The phone left: start counting what happens until it comes back.
 const leave = async ($: EngineInterface) => {
+  const id = ++departures
   const since = await $.clock.now()
   await update($, isPhone, () => false)
-  if ((await read($, away)) !== null) return
+  // Open the record before the checkout scan, so calls that finish during it still count.
+  const opened = { isNew: false }
+  await update($, away, current => {
+    if (current !== null) return current
+    opened.isNew = true
+    return emptyAway(since, id)
+  })
+  if (!opened.isNew) return
   const tree = await readTree($)
-  await update($, away, current => current ?? emptyAway(since, tree))
+  if (tree !== null) await update($, away, held => (held?.id === id ? { ...held, tree } : held))
 }
 
 const notifyAway = async ($: EngineInterface, text: string) => {
@@ -146,14 +158,20 @@ export const register: Register = on => {
   on('session.attach', { surface: 'mobile' }, async ($, e, next) => {
     const result = await next(e)
     await update($, isPhone, () => true)
-    let held = await read($, away)
+    const seen = departures
+    const open = await read($, away)
     // A shell command still running may already have written files: count them now,
     // since once the absence ends its own check finds nothing to add to.
-    if (held?.tree && shellsRunning > 0) {
-      const touched = await changedSince($, held.tree)
-      held = { ...held, changed: [...new Set([...held.changed, ...touched])] }
-    }
-    await update($, away, () => null)
+    const touched = open?.tree && shellsRunning > 0 ? await changedSince($, open.tree) : []
+    // Close the record as it stands now, with whatever finished during the scan, unless
+    // the phone left again meanwhile: then the absence goes on.
+    const closed: { away: Away | null } = { away: null }
+    await update($, away, current => {
+      if (current === null || departures !== seen) return current
+      closed.away = { ...current, changed: [...new Set([...current.changed, ...touched])] }
+      return null
+    })
+    const held = closed.away
     if (held !== null && (hasNews(held) || (await read($, pending)).length > 0)) {
       const until = await $.clock.now()
       await update($, summary, () => ({ ...held, until }))
