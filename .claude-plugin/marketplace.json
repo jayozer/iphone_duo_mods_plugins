@@ -1,0 +1,16 @@
+{
+  "name": "iphone-duo",
+  "owner": {
+    "name": "acrobat"
+  },
+  "metadata": {
+    "description": "Claude Code mods and plugins for using coding agents on the iPhone Duo"
+  },
+  "plugins": [
+    {
+      "name": "duo",
+      "source": "./claude-code/mods/duo",
+      "description": "Phone mode for Claude Code on the iPhone Duo: a fold-aware pane, one-tap prompts and thumb approvals"
+    }
+  ]
+}
