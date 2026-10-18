@@ -1,0 +1,350 @@
+import { atom, read, update } from 'claude-code'
+import type { EngineInterface, Register } from 'claude-code'
+
+import type { Gauges } from '../types'
+import {
+  BREAKPOINT,
+  baseName,
+  callInput,
+  clock,
+  describeCall,
+  duration,
+  emptyAway,
+  field,
+  firstQuestion,
+  gaugeSvg,
+  hasNews,
+  isTestCommand,
+  outputText,
+  readTestRun,
+  testLine,
+} from './lib'
+
+const AWAY_PANE = 'duo-away'
+const MONITOR_PANE = 'duo-monitor'
+const WRITE_TOOLS = ['Edit', 'Write', 'NotebookEdit']
+const NO_GAUGES: Gauges = { contextPercent: null, ratePercent: null, costUsd: null }
+
+const isPhone = atom({ plugin: 'duo-glance', key: 'isPhone' } as const, false)
+const away = atom({ plugin: 'duo-glance', key: 'away' } as const, null)
+const summary = atom({ plugin: 'duo-glance', key: 'summary' } as const, null)
+const step = atom({ plugin: 'duo-glance', key: 'step' } as const, null)
+const turnStartedAt = atom({ plugin: 'duo-glance', key: 'turnStartedAt' } as const, null)
+const lastTest = atom({ plugin: 'duo-glance', key: 'lastTest' } as const, null)
+const gauges = atom({ plugin: 'duo-glance', key: 'gauges' } as const, NO_GAUGES)
+const isMonitorOpen = atom({ plugin: 'duo-glance', key: 'isMonitorOpen' } as const, false)
+const now = atom({ plugin: 'duo-glance', key: 'now' } as const, 0)
+
+const openMonitor = async ($: EngineInterface) => {
+  const usage = await $.session.usage()
+  await update($, gauges, () => readGauges(usage))
+  const at = await $.clock.now()
+  await update($, now, () => at)
+  await update($, isMonitorOpen, () => true)
+  await $.ui.open({ id: MONITOR_PANE, title: 'Monitor' })
+}
+
+function readGauges(usage: {
+  context: { percent?: number }
+  rateLimits: readonly { percentUsed: number }[]
+  cost?: { usd: number }
+}): Gauges {
+  return {
+    contextPercent: usage.context.percent ?? null,
+    ratePercent: usage.rateLimits.length === 0 ? null : Math.max(...usage.rateLimits.map(limit => limit.percentUsed)),
+    costUsd: usage.cost?.usd ?? null,
+  }
+}
+
+// The phone left: start counting what happens until it comes back.
+const leave = async ($: EngineInterface) => {
+  const since = await $.clock.now()
+  await update($, isPhone, () => false)
+  await update($, away, current => current ?? emptyAway(since))
+}
+
+const notifyAway = async ($: EngineInterface, text: string) => {
+  if ((await read($, away)) === null) return
+  void $.ui.notify(text, { title: 'Claude Code' }).catch(() => undefined)
+}
+
+export const register: Register = on => {
+  on('session.start', async ($, e, next) => {
+    await $.command.register({
+      name: 'glance',
+      description: 'iPhone Duo glance: /glance monitor, /glance away, or /glance status',
+      argumentHint: 'monitor | away | status',
+    })
+    const surfaces = await $.session.surfaces()
+    await update($, isPhone, () => surfaces.includes('mobile'))
+    const usage = await $.session.usage()
+    await update($, gauges, () => readGauges(usage))
+    $.clock.every(1000, () => {
+      void (async () => {
+        if ((await read($, isMonitorOpen)) && (await read($, turnStartedAt)) !== null) {
+          const at = await $.clock.now()
+          await update($, now, () => at)
+        }
+      })().catch(() => undefined)
+    })
+
+    return next(e)
+  })
+
+  on('session.attach', { surface: 'mobile' }, async ($, e, next) => {
+    const result = await next(e)
+    await update($, isPhone, () => true)
+    const held = await read($, away)
+    await update($, away, () => null)
+    if (held !== null && hasNews(held)) {
+      const until = await $.clock.now()
+      await update($, summary, () => ({ ...held, until }))
+      await $.ui.open({ id: AWAY_PANE, title: 'While you were away' })
+    }
+
+    return result
+  })
+
+  on('session.detach', async ($, e, next) => {
+    const result = await next(e)
+    if (e.surface !== 'mobile' || e.reason === 'end') return result
+    const surfaces = await $.session.surfaces()
+    if (!surfaces.includes('mobile')) await leave($)
+
+    return result
+  })
+
+  on('command.run', { command: 'glance' }, async ($, e) => {
+    const word = e.args.trim().split(/\s+/)[0] || 'status'
+    if (word === 'monitor') {
+      await openMonitor($)
+      return { text: 'Desk monitor opened. Prop the phone half-open and it shows the session at a glance.' }
+    }
+    if (word === 'away') {
+      // Pretend the phone just left, so the next time it attaches you get a summary.
+      await leave($)
+      return { text: 'Counting from now: the next time the phone opens this session it gets a summary.' }
+    }
+    const held = await read($, away)
+    return {
+      text:
+        `Phone attached: ${(await read($, isPhone)) ? 'yes' : 'no'}. ` +
+        (held === null
+          ? 'Not counting an absence.'
+          : `Away for ${duration((await $.clock.now()) - held.since)}: ${held.turns} turns, ` +
+            `${held.changed.length} files changed, ${held.waiting.length} waiting on you.`),
+    }
+  })
+
+  on('ui.close', async ($, e, next) => {
+    const result = await next(e)
+    if (e.id === MONITOR_PANE) await update($, isMonitorOpen, () => false)
+    if (e.id === AWAY_PANE) await update($, summary, () => null)
+
+    return result
+  })
+
+  on('turn.start', async ($, e, next) => {
+    if (e.agentId === undefined) {
+      const at = await $.clock.now()
+      await update($, turnStartedAt, () => at)
+      await update($, now, () => at)
+    }
+
+    return next(e)
+  })
+
+  on('turn.complete', async ($, e, next) => {
+    if (e.agentId !== undefined) return next(e)
+    await update($, turnStartedAt, () => null)
+    await update($, step, () => null)
+    await update($, away, held => (held === null ? null : { ...held, turns: held.turns + 1 }))
+    const usage = await $.session.usage()
+    await update($, gauges, () => readGauges(usage))
+    await notifyAway($, e.isAborted ? 'Claude stopped.' : 'Claude finished a turn.')
+
+    return next(e)
+  })
+
+  on('session.measure', async ($, e, next) => {
+    await update($, gauges, () => readGauges(e))
+
+    return next(e)
+  })
+
+  on('tool.check', async ($, e, next) => {
+    const verdict = await next(e)
+    if (verdict.decision === 'ask' && e.tool_use_id !== undefined && (await read($, away)) !== null) {
+      const what = `Approve ${describeCall(e.tool, e.input)}`
+      await update($, away, held => (held === null ? null : { ...held, waiting: [...held.waiting, what] }))
+      await notifyAway($, `Waiting for your OK: ${describeCall(e.tool, e.input)}`)
+    }
+
+    return verdict
+  })
+
+  on('tool.call', async ($, e, next) => {
+    const input = callInput(e)
+    if (e.agentId === undefined) await update($, step, () => describeCall(e.tool, input))
+    if (e.tool === 'AskUserQuestion' && (await read($, away)) !== null) {
+      const question = firstQuestion(input)
+      await update($, away, held => (held === null ? null : { ...held, waiting: [...held.waiting, question] }))
+      await notifyAway($, question)
+    }
+    const ran = await next(e)
+    const isFailed = 'deny' in ran && ran.deny !== undefined ? true : ran.isError === true
+    if (e.tool === 'AskUserQuestion') {
+      await update($, away, held => (held === null ? null : { ...held, waiting: held.waiting.slice(0, -1) }))
+    }
+
+    const command = field(input, 'command')
+    if (e.tool === 'Bash' && command !== undefined && isTestCommand(command)) {
+      const run = readTestRun(command, outputText('result' in ran ? ran.result : undefined), isFailed)
+      await update($, lastTest, () => run)
+      await update($, away, held => (held === null ? null : { ...held, tests: [...held.tests, run] }))
+    } else if (isFailed) {
+      await update($, away, held => (held === null ? null : { ...held, errors: held.errors + 1 }))
+    }
+
+    const path = field(input, 'file_path') ?? field(input, 'notebook_path')
+    if (!isFailed && path !== undefined && WRITE_TOOLS.includes(e.tool)) {
+      await update($, away, held =>
+        held === null || held.changed.includes(path) ? held : { ...held, changed: [...held.changed, path] },
+      )
+    }
+
+    return ran
+  })
+
+  on('ui.render', { component: 'Pane', requestId: AWAY_PANE }, async ($, e) => {
+    const { Box, Text, Button } = $.ui.resolve(e)
+    const seen = await read($, summary)
+    if (seen === null) return <Text dimColor>Nothing happened while you were away.</Text>
+    const isWide = e.props.bodyColumns >= BREAKPOINT
+    const latestTest = seen.tests[seen.tests.length - 1]
+    const shown = seen.changed.slice(isWide ? -10 : -4)
+
+    return (
+      <Box flexDirection="column" gap="sm">
+        <Text bold>Away {duration(seen.until - seen.since)}</Text>
+        <Text>
+          {seen.turns} turn{seen.turns === 1 ? '' : 's'} finished · {seen.changed.length} file
+          {seen.changed.length === 1 ? '' : 's'} changed
+          {seen.errors > 0 ? ` · ${seen.errors} error${seen.errors === 1 ? '' : 's'}` : ''}
+        </Text>
+        {latestTest !== undefined && (
+          <Text color={latestTest.isPassing ? 'green' : 'red'}>{testLine(latestTest)}</Text>
+        )}
+        {seen.waiting.length > 0 && (
+          <Box key="waiting" flexDirection="column" borderStyle="round" paddingX="sm">
+            <Text bold>Waiting on you</Text>
+            {seen.waiting.map((item, index) => (
+              <Text key={`wait-${index}`} wrap="truncate-end">
+                {item}
+              </Text>
+            ))}
+          </Box>
+        )}
+        {shown.length > 0 && (
+          <Box key="files" flexDirection="column">
+            {shown.map(path => (
+              <Text key={path} dimColor wrap="truncate-start">
+                {isWide ? path : baseName(path)}
+              </Text>
+            ))}
+            {seen.changed.length > shown.length && (
+              <Text dimColor>and {seen.changed.length - shown.length} more</Text>
+            )}
+          </Box>
+        )}
+        <Box key="actions" flexDirection="row" flexWrap="wrap" gap="sm">
+          <Button
+            key="review"
+            label="Review changes"
+            variant="primary"
+            onPress={() =>
+              void $.prompt
+                .submit({
+                  text: 'Summarize what changed while I was away, one short bullet per file, then anything that needs my decision.',
+                })
+                .catch(() => undefined)
+            }
+          />
+          <Button key="monitor" label="Monitor" onPress={() => openMonitor($)} />
+          <Button
+            key="dismiss"
+            label="Got it"
+            role="dismiss"
+            onPress={async () => {
+              await update($, summary, () => null)
+              await $.ui.close({ id: AWAY_PANE })
+            }}
+          />
+        </Box>
+      </Box>
+    )
+  })
+
+  on('ui.render', { component: 'Pane', requestId: MONITOR_PANE }, async ($, e) => {
+    const { Box, Text } = $.ui.resolve(e)
+    const columns = e.props.bodyColumns
+    const isWide = columns >= BREAKPOINT
+    const startedAt = await read($, turnStartedAt)
+    const current = await read($, step)
+    const test = await read($, lastTest)
+    const meters = await read($, gauges)
+    const at = await read($, now)
+    const width = Math.max(120, Math.min(isWide ? 260 : 320, columns * 7))
+    // An SVG bar where the surface draws one (not the terminal), else the figure as text.
+    const gauge = (key: string, label: string, percent: number) => {
+      const alt = `${label} ${Math.round(percent)}%`
+      if (e.surface !== 'terminal') {
+        const { Svg } = $.ui.resolve(e)
+        return <Svg key={key} source={gaugeSvg(label, percent, width)} alt={alt} />
+      }
+      return (
+        <Text key={key} dimColor>
+          {alt}
+        </Text>
+      )
+    }
+
+    const status = (
+      <Box key="status" flexDirection="column">
+        <Text size="title" bold>
+          {startedAt === null ? 'Idle' : clock(at - startedAt)}
+        </Text>
+        <Text dimColor wrap="truncate-end">
+          {startedAt === null ? 'Waiting for your next prompt' : (current ?? 'Thinking')}
+        </Text>
+        {test === null ? (
+          <Text dimColor>No test run yet</Text>
+        ) : (
+          <Text size="heading" color={test.isPassing ? 'green' : 'red'}>
+            {testLine(test)}
+          </Text>
+        )}
+      </Box>
+    )
+
+    const meterBox = (
+      <Box key="meters" flexDirection="column" gap="sm">
+        {meters.contextPercent !== null && gauge('context', 'Context', meters.contextPercent)}
+        {meters.ratePercent !== null && gauge('rate', 'Rate limit', meters.ratePercent)}
+        {meters.costUsd !== null && <Text dimColor>Cost so far ${meters.costUsd.toFixed(2)}</Text>}
+      </Box>
+    )
+
+    return isWide ? (
+      <Box flexDirection="row" gap="md">
+        <Box width="55%">{status}</Box>
+        <Box width="45%">{meterBox}</Box>
+      </Box>
+    ) : (
+      <Box flexDirection="column" gap="md">
+        {status}
+        {meterBox}
+      </Box>
+    )
+  })
+}

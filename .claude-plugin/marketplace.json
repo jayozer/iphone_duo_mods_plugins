@@ -11,6 +11,11 @@
       "name": "duo",
       "source": "./claude-code/mods/duo",
       "description": "Phone mode for Claude Code on the iPhone Duo: a fold-aware pane, one-tap prompts and thumb approvals"
+    },
+    {
+      "name": "duo-glance",
+      "source": "./claude-code/mods/duo-glance",
+      "description": "Glanceable Claude Code on the iPhone Duo: an away summary and a desk monitor"
     }
   ]
 }
