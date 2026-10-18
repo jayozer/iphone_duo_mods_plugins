@@ -17,6 +17,7 @@ import {
   isTestCommand,
   outputText,
   readTestRun,
+  reviewPrompt,
   testLine,
 } from './lib'
 
@@ -276,9 +277,7 @@ export const register: Register = on => {
             variant="primary"
             onPress={() =>
               void $.prompt
-                .submit({
-                  text: 'Summarize what changed while I was away, one short bullet per file, then anything that needs my decision.',
-                })
+                .submit({ text: reviewPrompt(seen.changed, seen.until - seen.since) })
                 .catch(() => undefined)
             }
           />

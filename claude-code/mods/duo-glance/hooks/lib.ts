@@ -70,6 +70,16 @@ export const emptyAway = (since: number): Away => ({ since, turns: 0, changed: [
 export const hasNews = (away: Away) =>
   away.turns > 0 || away.changed.length > 0 || away.tests.length > 0 || away.errors > 0
 
+// Names the files the absence recorded, so other edits in the tree are not mixed in.
+export const reviewPrompt = (changed: readonly string[], awayMs: number) => {
+  const head = `I was away for ${duration(awayMs)}.`
+  const ask = 'then anything that needs my decision.'
+  if (changed.length === 0) return `${head} Summarize what you did in that time in short bullets, ${ask}`
+  const listed = changed.slice(0, 30).map(path => `- ${path}`)
+  if (changed.length > 30) listed.push(`- and ${changed.length - 30} more`)
+  return `${head} You changed these files in that time:\n${listed.join('\n')}\nSummarize the change to each in one short bullet, ${ask}`
+}
+
 export const duration = (ms: number) => {
   const minutes = Math.max(0, Math.round(ms / 60_000))
   if (minutes < 1) return 'under a minute'

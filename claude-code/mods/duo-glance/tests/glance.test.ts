@@ -7,7 +7,13 @@ import { readTestRun } from '../hooks/lib'
 const midQuestion: { run?: () => Promise<void> } = {}
 const bash: { isDenied: boolean } = { isDenied: false }
 
+const submitted: string[] = []
+
 const engine = (on: On, opened: string[]) => {
+  on('prompt.submit', (_$, e) => {
+    submitted.push(e.text)
+    return { text: e.text } as never
+  })
   let surfaces: ('mobile' | 'terminal')[] = []
   on('session.attach', (_$, e) => {
     surfaces = ['mobile']
@@ -71,6 +77,8 @@ test('coming back to the phone shows what happened while away', async ($, on) =>
   expect(await ui.find({ text: '1 file changed' })).toBeDefined()
   expect(await ui.find({ text: 'Tests failing · 9 passed, 2 failed' })).toBeDefined()
   expect(await ui.find({ text: 'app.ts' })).toBeDefined()
+  await ui.press({ key: 'review' })
+  expect(submitted.at(-1)).toContain('- /repo/src/app.ts')
   await ui.press({ key: 'dismiss' })
   expect(await ui.find({ text: 'Nothing happened while you were away.' })).toBeDefined()
   await ui.unmount()
