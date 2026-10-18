@@ -258,45 +258,48 @@ export const register: Register = on => {
     }
     const isShell = e.tool === 'Bash'
     if (isShell) shellsRunning++
-    const ran = await next(e).finally(() => {
+    // Counted until its checkout scan below is done, so a phone coming back meanwhile reconciles.
+    try {
+      const ran = await next(e)
+      // Finished, answered, approved or denied (here or on another surface): no longer
+      // running and no longer waiting on you.
+      if (isMainLoop) await update($, steps, list => list.filter(one => one.id !== id))
+      await update($, pending, list => list.filter(one => one.id !== id))
+      const isDenied = 'deny' in ran && ran.deny !== undefined
+      if (isDenied) return ran
+      const isFailed = ran.isError === true
+
+      const command = field(input, 'command')
+      if (e.tool === 'Bash' && command !== undefined && isTestCommand(command)) {
+        const run = readTestRun(command, outputText('result' in ran ? ran.result : undefined), isFailed)
+        await update($, lastTest, () => run)
+        await update($, away, held => (held === null ? null : { ...held, tests: [...held.tests, run] }))
+      } else if (isFailed) {
+        await update($, away, held => (held === null ? null : { ...held, errors: held.errors + 1 }))
+      }
+
+      const path = field(input, 'file_path') ?? field(input, 'notebook_path')
+      if (!isFailed && path !== undefined && WRITE_TOOLS.includes(e.tool)) {
+        await update($, away, held =>
+          held === null || held.changed.includes(path) ? held : { ...held, changed: [...held.changed, path] },
+        )
+      }
+      // A shell command can change files too (sed -i, a formatter, a generator, a commit):
+      // compare the checkout with how it was when the phone left, whenever the call began.
+      const then = e.tool === 'Bash' ? (await read($, away))?.tree : null
+      if (then !== null && then !== undefined) {
+        const touched = await changedSince($, then)
+        await update($, away, held => {
+          if (held === null) return null
+          const added = touched.filter(one => !held.changed.includes(one))
+          return added.length === 0 ? held : { ...held, changed: [...held.changed, ...added] }
+        })
+      }
+
+      return ran
+    } finally {
       if (isShell) shellsRunning--
-    })
-    // Finished, answered, approved or denied (here or on another surface): no longer
-    // running and no longer waiting on you.
-    if (isMainLoop) await update($, steps, list => list.filter(one => one.id !== id))
-    await update($, pending, list => list.filter(one => one.id !== id))
-    const isDenied = 'deny' in ran && ran.deny !== undefined
-    if (isDenied) return ran
-    const isFailed = ran.isError === true
-
-    const command = field(input, 'command')
-    if (e.tool === 'Bash' && command !== undefined && isTestCommand(command)) {
-      const run = readTestRun(command, outputText('result' in ran ? ran.result : undefined), isFailed)
-      await update($, lastTest, () => run)
-      await update($, away, held => (held === null ? null : { ...held, tests: [...held.tests, run] }))
-    } else if (isFailed) {
-      await update($, away, held => (held === null ? null : { ...held, errors: held.errors + 1 }))
     }
-
-    const path = field(input, 'file_path') ?? field(input, 'notebook_path')
-    if (!isFailed && path !== undefined && WRITE_TOOLS.includes(e.tool)) {
-      await update($, away, held =>
-        held === null || held.changed.includes(path) ? held : { ...held, changed: [...held.changed, path] },
-      )
-    }
-    // A shell command can change files too (sed -i, a formatter, a generator, a commit):
-    // compare the checkout with how it was when the phone left, whenever the call began.
-    const then = e.tool === 'Bash' ? (await read($, away))?.tree : null
-    if (then !== null && then !== undefined) {
-      const touched = await changedSince($, then)
-      await update($, away, held => {
-        if (held === null) return null
-        const added = touched.filter(one => !held.changed.includes(one))
-        return added.length === 0 ? held : { ...held, changed: [...held.changed, ...added] }
-      })
-    }
-
-    return ran
   })
 
   on('ui.render', { component: 'Pane', requestId: AWAY_PANE }, async ($, e) => {
@@ -376,7 +379,9 @@ export const register: Register = on => {
     const test = await read($, lastTest)
     const meters = await read($, gauges)
     const at = await read($, now)
-    const width = Math.max(120, Math.min(isWide ? 260 : 320, columns * 7))
+    // About 7 px a column; unfolded, the gauges sit in the 45% column beside the status.
+    const meterColumns = isWide ? Math.floor(columns * 0.45) - 2 : columns
+    const width = Math.max(120, Math.min(320, meterColumns * 7))
     // An SVG bar where the surface draws one (not the terminal), else the figure as text.
     const gauge = (key: string, label: string, percent: number) => {
       const alt = `${label} ${Math.round(percent)}%`
