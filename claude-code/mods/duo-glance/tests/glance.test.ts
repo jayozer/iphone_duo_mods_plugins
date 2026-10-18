@@ -1,11 +1,13 @@
 import type { On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 
-import { readTestRun } from '../hooks/lib'
+import { callInput, field, readTestRun } from '../hooks/lib'
 
 // Stands in for the engine beneath the plugin: a phone that comes and goes, panes, usage.
 const midQuestion: { run?: () => Promise<void> } = {}
 const bash: { isDenied: boolean } = { isDenied: false }
+// The checkout at /repo: what `git status` lists as changed.
+const tree: { dirty: string[] } = { dirty: [] }
 
 const submitted: string[] = []
 
@@ -24,6 +26,13 @@ const engine = (on: On, opened: string[]) => {
     return { clientId: e.clientId }
   })
   on('session.surfaces', () => ({ value: surfaces }))
+  on('process.run', (_$, e) => {
+    const out = (stdout: string) => ({
+      value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false },
+    })
+    if (e.argv[1] === 'rev-parse') return out('/repo\n')
+    return out(tree.dirty.map(path => ` M ${path}\0`).join(''))
+  })
   on('session.usage', () => ({
     value: { startedAt: 0, context: { window: 200_000, percent: 42 }, rateLimits: [{ kind: 'five_hour', percentUsed: 30 }] },
   }))
@@ -38,6 +47,8 @@ const engine = (on: On, opened: string[]) => {
     // The phone comes back while the question is still open, then the person answers it.
     if (e.tool === 'AskUserQuestion') await midQuestion.run?.()
     if (e.tool === 'Bash' && bash.isDenied) return { deny: 'Denied by a plugin' } as never
+    const command = field(callInput(e), 'command') ?? ''
+    if (command.startsWith('npm run gen')) tree.dirty.push('src/gen.ts')
     return e.tool === 'Bash'
       ? ({ result: { stdout: 'Tests: 2 failed, 9 passed', stderr: '', interrupted: false }, isError: true } as never)
       : ({ result: { filePath: '/repo/src/app.ts' } } as never)
@@ -199,5 +210,21 @@ test('the monitor drops a step once its tool finishes', async ($, on) => {
   const ui = await $.ui.mount(pane('duo-monitor', 40))
   expect(await ui.find({ text: 'Thinking' })).toBeDefined()
   expect(await ui.find({ text: 'Edit · app.ts' })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('files a shell command changed while away are listed, not ones already changed', async ($, on) => {
+  const opened: string[] = []
+  engine(on, opened)
+  tree.dirty = ['notes.md']
+  await $.session.attach(phone)
+  await $.session.detach({ ...phone, reason: 'detached' } as never)
+  await $.tool.call({ tool: 'Bash', input: { command: 'npm run gen' } } as never)
+  await $.session.attach(phone)
+  tree.dirty = []
+
+  const ui = await $.ui.mount(pane('duo-away', 40))
+  expect(await ui.find({ text: 'gen.ts' })).toBeDefined()
+  expect(await ui.find({ text: 'notes.md' })).toBeUndefined()
   await ui.unmount()
 })

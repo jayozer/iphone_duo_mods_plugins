@@ -65,7 +65,26 @@ export const outputText = (result: unknown): string => {
   return [field(result, 'stdout'), field(result, 'stderr')].filter(Boolean).join('\n')
 }
 
-export const emptyAway = (since: number): Away => ({ since, turns: 0, changed: [], tests: [], errors: 0 })
+export const emptyAway = (since: number, dirtyAtLeave: string[] = []): Away => ({
+  since,
+  turns: 0,
+  changed: [],
+  tests: [],
+  errors: 0,
+  dirtyAtLeave,
+})
+
+// `git status --porcelain -z` entries as repo-relative paths; a rename or copy carries its old name next.
+export const dirtyPaths = (porcelain: string): string[] => {
+  const fields = porcelain.split('\0').filter(Boolean)
+  const paths: string[] = []
+  for (let i = 0; i < fields.length; i++) {
+    const entry = fields[i] ?? ''
+    paths.push(entry.slice(3))
+    if (/[RC]/.test(entry.slice(0, 2))) i++
+  }
+  return paths
+}
 
 export const hasNews = (away: Away) =>
   away.turns > 0 || away.changed.length > 0 || away.tests.length > 0 || away.errors > 0

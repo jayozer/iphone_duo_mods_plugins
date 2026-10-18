@@ -13,6 +13,7 @@ import {
   field,
   firstQuestion,
   gaugeSvg,
+  dirtyPaths,
   hasNews,
   isTestCommand,
   outputText,
@@ -59,10 +60,28 @@ function readGauges(usage: {
 }
 
 // The phone left: start counting what happens until it comes back.
+// The working tree's changed files by absolute path, or null outside a git checkout.
+const readDirty = async ($: EngineInterface): Promise<string[] | null> => {
+  try {
+    const top = await $.process.run(['git', 'rev-parse', '--show-toplevel'], { timeoutMs: 2000 })
+    if (top.exitCode !== 0) return null
+    const root = top.stdout.trim()
+    const status = await $.process.run(['git', 'status', '--porcelain', '-z', '--untracked-files=all'], {
+      cwd: root,
+      timeoutMs: 4000,
+    })
+    return status.exitCode === 0 ? dirtyPaths(status.stdout).map(path => `${root}/${path}`) : null
+  } catch {
+    return null
+  }
+}
+
 const leave = async ($: EngineInterface) => {
   const since = await $.clock.now()
   await update($, isPhone, () => false)
-  await update($, away, current => current ?? emptyAway(since))
+  if ((await read($, away)) !== null) return
+  const dirty = (await readDirty($)) ?? []
+  await update($, away, current => current ?? emptyAway(since, dirty))
 }
 
 const notifyAway = async ($: EngineInterface, text: string) => {
@@ -223,6 +242,17 @@ export const register: Register = on => {
       await update($, away, held =>
         held === null || held.changed.includes(path) ? held : { ...held, changed: [...held.changed, path] },
       )
+    }
+    // A shell command can change files too (sed -i, a formatter, a generator): ask git.
+    if (e.tool === 'Bash' && (await read($, away)) !== null) {
+      const dirty = await readDirty($)
+      if (dirty !== null) {
+        await update($, away, held => {
+          if (held === null) return null
+          const added = dirty.filter(one => !held.dirtyAtLeave.includes(one) && !held.changed.includes(one))
+          return added.length === 0 ? held : { ...held, changed: [...held.changed, ...added] }
+        })
+      }
     }
 
     return ran
