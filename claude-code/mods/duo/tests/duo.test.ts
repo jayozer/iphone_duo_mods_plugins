@@ -95,3 +95,16 @@ test('folded on the phone, a tool row is one line', async ($, on) => {
   expect(await row.find({ type: 'Text', text: '✓ Bash · npm test' })).toBeDefined()
   await row.unmount()
 })
+
+test('/duo status names the clients the session sees and where the command came from', async ($, on) => {
+  phone(on)
+  on('session.surfaces', () => ({ value: ['terminal', 'desktop'] }))
+  const result = await $.command.run({
+    command: 'duo',
+    args: 'status',
+    origin: { kind: 'bridge' },
+    presentation: { isFullscreen: false, columns: 40 },
+  })
+  expect(result.text).toContain('Clients: terminal, desktop.')
+  expect(result.text).toContain('Sent from: bridge.')
+})

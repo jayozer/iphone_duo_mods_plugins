@@ -23,7 +23,7 @@ At the prompt of a terminal session:
 
 To try it from a clone, run `claude --plugin-dir claude-code/mods/duo`. Then open the session on your phone through Remote Control (`claude --plugin-dir claude-code/mods/duo --remote-control`).
 
-To check it, run `claude plugin validate claude-code/mods/duo` and `claude plugin test claude-code/mods/duo` (4 tests).
+To check it, run `claude plugin validate claude-code/mods/duo` and `claude plugin test claude-code/mods/duo` (5 tests).
 
 ## Known limits
 - Approvals are still answered in the app's own permission prompt. A hook can't hold a decision open long enough to wait for a button press.
