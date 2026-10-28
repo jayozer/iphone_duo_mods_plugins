@@ -329,3 +329,72 @@ test('leaving again while a reconnect is still checking the checkout keeps the a
   expect(await ui.find({ text: 'a.ts' })).toBeDefined()
   await ui.unmount()
 })
+
+const fromApp = (args: string) =>
+  ({ command: 'glance', args, origin: { kind: 'bridge' }, presentation: { isFullscreen: false, columns: 40 } }) as const
+
+test('/glance in the app reports, as text, what happened since your last message', async ($, on) => {
+  const opened: string[] = []
+  engine(on, opened)
+  tree.files = {}
+  tree.head = 'a'
+  tree.committed = []
+  await $.prompt.submit({ text: 'fix the bug', origin: { kind: 'bridge' }, wait: false })
+  await $.turn.start({ text: 'fix the bug', turnId: 'turn-1' } as never)
+  await $.tool.call({ tool: 'Edit', input: { file_path: '/repo/src/app.ts', old_string: 'a', new_string: 'b' } } as never)
+  await $.tool.call({ tool: 'Bash', input: { command: 'npm run gen' } } as never)
+  await $.tool.call({ tool: 'Bash', input: { command: 'npm test' } } as never)
+  await $.turn.complete({ answer: 'done', durationMs: 1000, isAborted: false, turnId: 'turn-1' } as never)
+  tree.files = {}
+
+  const text = (await $.command.run(fromApp(''))).text ?? ''
+  expect(text).toContain('Idle.')
+  expect(text).toContain('Since your last message (under a minute): 1 turn finished · 2 files changed · 1 error')
+  expect(text).toContain('Tests failing · 9 passed, 2 failed')
+  expect(text).toContain('Context 42% · Rate limit 30%')
+  expect(text).toContain('Changed: app.ts, gen.ts')
+
+  // The monitor can't open in the app, so it answers with the same text.
+  expect((await $.command.run(fromApp('monitor'))).text).toContain('Since your last message')
+  expect(opened).not.toContain('duo-monitor')
+
+  // A new message starts the count again; a slash command does not.
+  await $.prompt.submit({ text: 'now the docs', origin: { kind: 'bridge' }, wait: false })
+  expect((await $.command.run(fromApp('status'))).text).toContain('0 turns finished · 0 files changed')
+})
+
+test('/glance shows the running step and what is waiting on you', async ($, on) => {
+  const opened: string[] = []
+  engine(on, opened)
+  let text = ''
+  midQuestion.run = async () => {
+    text = (await $.command.run(fromApp(''))).text ?? ''
+  }
+  await $.prompt.submit({ text: 'plan it', origin: { kind: 'bridge' }, wait: false })
+  await $.turn.start({ text: 'plan it', turnId: 'turn-1' } as never)
+  await $.tool.call({ tool: 'AskUserQuestion', input: { questions: [{ question: 'Which database?' }] } } as never)
+  midQuestion.run = undefined
+
+  expect(text).toContain('Working 00:00 · AskUserQuestion')
+  expect(text).toContain('Waiting on you: Which database?')
+})
+
+test('/glance counts files a running shell command has already written', async ($, on) => {
+  const opened: string[] = []
+  engine(on, opened)
+  tree.files = {}
+  tree.head = 'a'
+  tree.committed = []
+  let text = ''
+  midBash.run = async () => {
+    tree.files['src/early.ts'] = 1
+    text = (await $.command.run(fromApp(''))).text ?? ''
+  }
+  await $.prompt.submit({ text: 'generate', origin: { kind: 'bridge' }, wait: false })
+  await $.tool.call({ tool: 'Bash', input: { command: 'npm run long' } } as never)
+  midBash.run = undefined
+  tree.files = {}
+
+  expect(text).toContain('1 file changed')
+  expect(text).toContain('Changed: early.ts')
+})

@@ -108,3 +108,55 @@ test('/duo status names the clients the session sees and where the command came 
   expect(result.text).toContain('Clients: terminal, desktop.')
   expect(result.text).toContain('Sent from: bridge.')
 })
+
+test('a prompt from the app turns duo on and asks for phone-sized replies', async ($, on) => {
+  phone(on)
+  on('session.surfaces', () => ({ value: ['terminal'] }))
+  on('prompt.submit', (_$, e) => ({ text: e.text }) as never)
+  on('prompt.compose', () => ({ sections: [] }) as never)
+  const status = () =>
+    $.command.run({
+      command: 'duo',
+      args: 'status',
+      origin: { kind: 'bridge' },
+      presentation: { isFullscreen: false, columns: 40 },
+    })
+  const sections = async () => {
+    const input = { model: 'm', promptModel: 'm', surfaces: ['terminal'], tools: [], outputStyle: null, traits: [] } as const
+    return (await $.prompt.compose(input)).sections.map(s => s.id)
+  }
+
+  expect((await status()).text).toContain('inactive')
+  expect(await sections()).not.toContain('duo:phone-style')
+
+  await $.prompt.submit({ text: 'fix the build', origin: { kind: 'bridge' }, wait: false })
+  expect((await status()).text).toContain('auto, active')
+  expect((await status()).text).toContain('Last prompt from the app: yes.')
+  expect(await sections()).toContain('duo:phone-style')
+
+  // Back at the desk: a prompt typed at the terminal turns it off again.
+  await $.prompt.submit({ text: 'and the tests', origin: { kind: 'composer' }, wait: false })
+  expect((await status()).text).toContain('inactive')
+  expect(await sections()).not.toContain('duo:phone-style')
+})
+
+test('/duo reads on lets reads through for the app, which has no pane', async ($, on) => {
+  phone(on)
+  on('session.surfaces', () => ({ value: ['terminal'] }))
+  on('prompt.submit', (_$, e) => ({ text: e.text }) as never)
+  on('tool.check', () => ({ decision: 'ask' }))
+  await $.prompt.submit({ text: 'look around', origin: { kind: 'bridge' }, wait: false })
+  const reads = (arg: string) =>
+    $.command.run({
+      command: 'duo',
+      args: `reads ${arg}`,
+      origin: { kind: 'bridge' },
+      presentation: { isFullscreen: false, columns: 40 },
+    })
+
+  expect((await reads('on')).text).toBe('Auto-allow reads is on.')
+  expect((await $.tool.check({ tool: 'Read', input: { file_path: '/a.ts' } })).decision).toBe('allow')
+  expect((await $.tool.check({ tool: 'Bash', input: { command: 'ls' } })).decision).toBe('ask')
+  await reads('off')
+  expect((await $.tool.check({ tool: 'Read', input: { file_path: '/a.ts' } })).decision).toBe('ask')
+})

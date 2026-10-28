@@ -1,6 +1,6 @@
 {
   "name": "duo-glance",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": { "name": "acrobat" },
   "description": "Glanceable Claude Code on the iPhone Duo: a summary of what happened while you were away, and a desk monitor for the half-folded phone",
   "types": "./types/index.d.ts"

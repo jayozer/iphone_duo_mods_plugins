@@ -1,4 +1,4 @@
-import type { Away, TestRun, TreeSnapshot } from '../types'
+import type { Away, CallLine, Gauges, TestRun, TreeSnapshot } from '../types'
 
 // Below this many columns the phone is folded; above it, unfolded.
 export const BREAKPOINT = 56
@@ -143,4 +143,51 @@ export const gaugeSvg = (label: string, percent: number, width: number) => {
     `<rect x="0" y="18" width="${fill}" height="12" rx="6" fill="${gaugeColor(clamped)}"/>` +
     `</svg>`
   )
+}
+
+const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? '' : 's'}`
+
+const tally = (log: Away) =>
+  [
+    `${plural(log.turns, 'turn')} finished`,
+    `${plural(log.changed.length, 'file')} changed`,
+    ...(log.errors > 0 ? [plural(log.errors, 'error')] : []),
+  ].join(' · ')
+
+// A few short lines for a narrow screen, for the Claude app, which shows text but no panes.
+export const glanceText = (now: {
+  at: number
+  turnStartedAt: number | null
+  step: string | undefined
+  lastTest: TestRun | null
+  gauges: Gauges
+  recap: Away | null
+  away: Away | null
+  waiting: readonly CallLine[]
+}) => {
+  const lines = [
+    now.turnStartedAt === null ? 'Idle.' : `Working ${clock(now.at - now.turnStartedAt)} · ${now.step ?? 'thinking'}`,
+  ]
+  if (now.away !== null) lines.push(`Away ${duration(now.at - now.away.since)}: ${tally(now.away)}`)
+  if (now.recap !== null) {
+    lines.push(`Since your last message (${duration(now.at - now.recap.since)}): ${tally(now.recap)}`)
+  }
+  if (now.lastTest !== null) lines.push(testLine(now.lastTest))
+  if (now.waiting.length > 0) {
+    const shown = now.waiting.slice(0, 3).map(item => item.text)
+    if (now.waiting.length > 3) shown.push(`and ${now.waiting.length - 3} more`)
+    lines.push(`Waiting on you: ${shown.join('; ')}`)
+  }
+  const meters = [
+    now.gauges.contextPercent === null ? null : `Context ${Math.round(now.gauges.contextPercent)}%`,
+    now.gauges.ratePercent === null ? null : `Rate limit ${Math.round(now.gauges.ratePercent)}%`,
+    now.gauges.costUsd === null ? null : `$${now.gauges.costUsd.toFixed(2)}`,
+  ].filter(Boolean)
+  if (meters.length > 0) lines.push(meters.join(' · '))
+  const changed = (now.recap ?? now.away)?.changed ?? []
+  if (changed.length > 0) {
+    const names = changed.slice(-5).map(baseName)
+    lines.push(`Changed: ${names.join(', ')}${changed.length > 5 ? ` and ${changed.length - 5} more` : ''}`)
+  }
+  return lines.join('\n')
 }

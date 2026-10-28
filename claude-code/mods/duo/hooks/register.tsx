@@ -28,10 +28,11 @@ const activity = atom({ plugin: 'duo', key: 'activity' } as const, [])
 const changed = atom({ plugin: 'duo', key: 'changed' } as const, [])
 const pending = atom({ plugin: 'duo', key: 'pending' } as const, null)
 const isAutoReads = atom({ plugin: 'duo', key: 'isAutoReads' } as const, false)
+const isFromApp = atom({ plugin: 'duo', key: 'isFromApp' } as const, false)
 
 const isActive = async ($: EngineInterface) => {
   const current = await read($, mode)
-  return current === 'on' || (current === 'auto' && (await read($, isPhone)))
+  return current === 'on' || (current === 'auto' && ((await read($, isPhone)) || (await read($, isFromApp))))
 }
 
 const refreshPhone = async ($: EngineInterface) => {
@@ -90,6 +91,11 @@ export const register: Register = on => {
       }
       return { text: `Duo mode is ${word}.` }
     }
+    if (word === 'reads' && (arg === 'on' || arg === 'off')) {
+      // The Reads button's twin, for the app, which can't draw the pane.
+      await update($, isAutoReads, () => arg === 'on')
+      return { text: `Auto-allow reads is ${arg}.` }
+    }
     if (word === 'breakpoint') {
       const columns = Number(arg)
       if (!Number.isInteger(columns) || columns < 20 || columns > 200) {
@@ -101,10 +107,12 @@ export const register: Register = on => {
     }
     const active = await isActive($)
     const phone = await read($, isPhone)
+    const fromApp = await read($, isFromApp)
     return {
       text:
         `Duo mode: ${await read($, mode)}, ${active ? 'active' : 'inactive'}. ` +
-        `Phone attached: ${phone ? 'yes' : 'no'}. Two-column layout from ${await read($, breakpoint)} columns. ` +
+        `Phone attached: ${phone ? 'yes' : 'no'}. Last prompt from the app: ${fromApp ? 'yes' : 'no'}. ` +
+        `Two-column layout from ${await read($, breakpoint)} columns. ` +
         `Auto-allow reads: ${(await read($, isAutoReads)) ? 'on' : 'off'}. ` +
         // What the session sees, to tell why auto mode did or didn't spot the phone.
         `Clients: ${(await $.session.surfaces()).join(', ') || 'none'}. Sent from: ${e.origin.kind}.`,
@@ -168,10 +176,20 @@ export const register: Register = on => {
     return ran
   })
 
+  // A prompt typed in the app arrives through the bridge; one typed at the terminal, from the
+  // composer. Either says where you are now.
+  on('prompt.submit', async ($, e, next) => {
+    if (e.origin.kind === 'bridge' || e.origin.kind === 'composer') {
+      const isApp = e.origin.kind === 'bridge'
+      await update($, isFromApp, () => isApp)
+    }
+
+    return next(e)
+  })
+
   on('prompt.compose', async ($, e, next) => {
     const composed = await next(e)
-    const current = await read($, mode)
-    const isOn = current === 'on' || (current === 'auto' && e.surfaces.includes('mobile'))
+    const isOn = e.surfaces.includes('mobile') ? (await read($, mode)) !== 'off' : await isActive($)
     if (!isOn) return composed
 
     return { sections: [...composed.sections, { id: 'duo:phone-style', text: PHONE_STYLE, scope: 'session' }] }
