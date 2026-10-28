@@ -193,6 +193,17 @@ export const register: Register = on => {
     return next(e)
   })
 
+  // A message from the app is delivered to the session before it becomes a prompt, and may
+  // not raise prompt.submit at all.
+  on('session.receive', async ($, e, next) => {
+    if (e.origin.kind === 'bridge' && e.agentId === undefined) {
+      await update($, lastOrigin, () => 'bridge delivery')
+      await noteOrigin($, 'bridge')
+    }
+
+    return next(e)
+  })
+
   on('prompt.compose', async ($, e, next) => {
     const composed = await next(e)
     const isOn = e.surfaces.includes('mobile') ? (await read($, mode)) !== 'off' : await isActive($)

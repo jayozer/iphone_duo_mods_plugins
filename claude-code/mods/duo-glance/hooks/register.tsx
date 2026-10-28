@@ -154,6 +154,14 @@ const recordShellChanges = async ($: EngineInterface) => {
   await update($, recap, intoRecap)
 }
 
+const startRecap = async ($: EngineInterface) => {
+  const id = ++recaps
+  const since = await $.clock.now()
+  await update($, recap, () => emptyAway(since, id))
+  const tree = await readTree($)
+  if (tree !== null) await update($, recap, held => (held?.id === id ? { ...held, tree } : held))
+}
+
 const statusText = async ($: EngineInterface, isShellRunning: boolean) => {
   // A shell command still running may already have written files; its own check comes later.
   if (isShellRunning) await recordShellChanges($)
@@ -260,13 +268,15 @@ export const register: Register = on => {
   // A prompt you sent, from the app or the terminal, starts a new recap.
   on('prompt.submit', async ($, e, next) => {
     const isTyped = e.origin.kind === 'bridge' || e.origin.kind === 'composer'
-    if (isTyped && e.command === undefined && e.isMeta !== true) {
-      const id = ++recaps
-      const since = await $.clock.now()
-      await update($, recap, () => emptyAway(since, id))
-      const tree = await readTree($)
-      if (tree !== null) await update($, recap, held => (held?.id === id ? { ...held, tree } : held))
-    }
+    if (isTyped && e.command === undefined && e.isMeta !== true) await startRecap($)
+
+    return next(e)
+  })
+
+  // A message from the app is delivered to the session first, and may not raise prompt.submit.
+  on('session.receive', async ($, e, next) => {
+    const isMessage = e.origin.kind === 'bridge' && e.agentId === undefined && !e.text.trimStart().startsWith('/')
+    if (isMessage) await startRecap($)
 
     return next(e)
   })

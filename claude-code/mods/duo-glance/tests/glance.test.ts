@@ -398,3 +398,19 @@ test('/glance counts files a running shell command has already written', async (
   expect(text).toContain('1 file changed')
   expect(text).toContain('Changed: early.ts')
 })
+
+test('a message delivered from the app starts the recap', async ($, on) => {
+  const opened: string[] = []
+  engine(on, opened)
+  on('session.receive', (_$, e) => ({ text: e.text }) as never)
+  tree.files = {}
+  tree.head = 'a'
+  tree.committed = []
+  await $.session.receive({ origin: { kind: 'bridge' }, text: 'fix the bug' })
+  await $.tool.call({ tool: 'Edit', input: { file_path: '/repo/src/app.ts', old_string: 'a', new_string: 'b' } } as never)
+  // A slash command delivered the same way leaves the recap as it is.
+  await $.session.receive({ origin: { kind: 'bridge' }, text: '/glance' })
+
+  const text = (await $.command.run(fromApp(''))).text ?? ''
+  expect(text).toContain('Since your last message (under a minute): 0 turns finished · 1 file changed')
+})

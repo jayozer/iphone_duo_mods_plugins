@@ -1,4 +1,4 @@
-# duo-glance: see your Claude Code session at a glance on the iPhone Duo (v0.2)
+# duo-glance: see your Claude Code session at a glance on the iPhone Duo (v0.2.1)
 
 It works alongside the [duo](../duo) mod, and you can also install it on its own.
 
@@ -42,7 +42,7 @@ At the prompt of a terminal session:
 /plugin install duo-glance --marketplace jayozer/iphone_duo_mods_plugins
 ```
 
-To try it from a clone, run `claude --plugin-dir claude-code/mods/duo-glance --remote-control` and open the session from the Claude app on your phone. Run `claude plugin test claude-code/mods/duo-glance` for the tests (15 tests).
+To try it from a clone, run `claude --plugin-dir claude-code/mods/duo-glance --remote-control` and open the session from the Claude app on your phone. Run `claude plugin test claude-code/mods/duo-glance` for the tests (16 tests).
 
 ## Known limits
 - The mod can't tell when the phone is half-folded, so you open the monitor yourself.

@@ -164,3 +164,18 @@ test('/duo reads on lets reads through for the app, which has no pane', async ($
   await reads('off')
   expect((await $.tool.check({ tool: 'Read', input: { file_path: '/a.ts' } })).decision).toBe('ask')
 })
+
+test('a message delivered from the app turns duo on even without a prompt.submit', async ($, on) => {
+  phone(on)
+  on('session.surfaces', () => ({ value: ['terminal'] }))
+  on('session.receive', (_$, e) => ({ text: e.text }) as never)
+  await $.session.receive({ origin: { kind: 'bridge' }, text: 'fix the build' })
+  const result = await $.command.run({
+    command: 'duo',
+    args: 'status',
+    origin: { kind: 'sdk' },
+    presentation: { isFullscreen: false, columns: 40 },
+  })
+  expect(result.text).toContain('auto, active')
+  expect(result.text).toContain('Last prompt from: bridge delivery.')
+})
