@@ -6,4 +6,5 @@ This repo holds mods, plugins and skills for Claude Code and Codex, all aimed at
 - Codex entries live in `codex/skills/<name>/SKILL.md` and `codex/prompts/<name>.md`.
 - Mods target the `mobile` surface first, and that surface has no `Input` or `Select`, so all controls are buttons. Layout follows the width (`bodyColumns`): folded is about 40 columns, unfolded about 60.
 - Before committing, run `scripts/check.sh` and make sure it passes.
+- Bump the `version` in a mod's `.claude-plugin/plugin.json` whenever you change it. Otherwise `/plugin update` keeps the copy people already installed.
 - Never commit `.claude-plugin/types/` inside a mod: the engine regenerates it.

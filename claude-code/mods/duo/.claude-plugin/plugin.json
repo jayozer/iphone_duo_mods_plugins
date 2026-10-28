@@ -1,6 +1,6 @@
 {
   "name": "duo",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "author": { "name": "acrobat" },
   "description": "Phone mode for Claude Code on the iPhone Duo: a fold-aware pane, one-tap prompts and thumb approvals",
   "types": "./types/index.d.ts"
