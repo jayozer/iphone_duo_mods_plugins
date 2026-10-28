@@ -105,7 +105,9 @@ export const register: Register = on => {
       text:
         `Duo mode: ${await read($, mode)}, ${active ? 'active' : 'inactive'}. ` +
         `Phone attached: ${phone ? 'yes' : 'no'}. Two-column layout from ${await read($, breakpoint)} columns. ` +
-        `Auto-allow reads: ${(await read($, isAutoReads)) ? 'on' : 'off'}.`,
+        `Auto-allow reads: ${(await read($, isAutoReads)) ? 'on' : 'off'}. ` +
+        // What the session sees, to tell why auto mode did or didn't spot the phone.
+        `Clients: ${(await $.session.surfaces()).join(', ') || 'none'}. Sent from: ${e.origin.kind}.`,
     }
   })
 
