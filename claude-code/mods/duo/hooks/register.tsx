@@ -29,6 +29,13 @@ const changed = atom({ plugin: 'duo', key: 'changed' } as const, [])
 const pending = atom({ plugin: 'duo', key: 'pending' } as const, null)
 const isAutoReads = atom({ plugin: 'duo', key: 'isAutoReads' } as const, false)
 const isFromApp = atom({ plugin: 'duo', key: 'isFromApp' } as const, false)
+const lastOrigin = atom({ plugin: 'duo', key: 'lastOrigin' } as const, null)
+
+// A prompt or command from the app arrives through the bridge; one typed at the terminal,
+// from the composer. Either says where you are now; other origins (a routine, a peer) don't.
+const noteOrigin = async ($: EngineInterface, kind: string) => {
+  if (kind === 'bridge' || kind === 'composer') await update($, isFromApp, () => kind === 'bridge')
+}
 
 const isActive = async ($: EngineInterface) => {
   const current = await read($, mode)
@@ -81,6 +88,8 @@ export const register: Register = on => {
 
   on('command.run', { command: 'duo' }, async ($, e) => {
     const [word = 'status', arg] = e.args.trim().split(/\s+/)
+    // A command typed in the app says you're on the phone, as a prompt from there does.
+    await noteOrigin($, e.origin.kind)
     if (word === 'on' || word === 'off' || word === 'auto') {
       await update($, mode, () => word)
       await $.store.set('mode', word)
@@ -108,10 +117,11 @@ export const register: Register = on => {
     const active = await isActive($)
     const phone = await read($, isPhone)
     const fromApp = await read($, isFromApp)
+    const origin = await read($, lastOrigin)
     return {
       text:
         `Duo mode: ${await read($, mode)}, ${active ? 'active' : 'inactive'}. ` +
-        `Phone attached: ${phone ? 'yes' : 'no'}. Last prompt from the app: ${fromApp ? 'yes' : 'no'}. ` +
+        `Phone attached: ${phone ? 'yes' : 'no'}. On the app: ${fromApp ? 'yes' : 'no'}. Last prompt from: ${origin ?? 'none yet'}. ` +
         `Two-column layout from ${await read($, breakpoint)} columns. ` +
         `Auto-allow reads: ${(await read($, isAutoReads)) ? 'on' : 'off'}. ` +
         // What the session sees, to tell why auto mode did or didn't spot the phone.
@@ -176,13 +186,9 @@ export const register: Register = on => {
     return ran
   })
 
-  // A prompt typed in the app arrives through the bridge; one typed at the terminal, from the
-  // composer. Either says where you are now.
   on('prompt.submit', async ($, e, next) => {
-    if (e.origin.kind === 'bridge' || e.origin.kind === 'composer') {
-      const isApp = e.origin.kind === 'bridge'
-      await update($, isFromApp, () => isApp)
-    }
+    await update($, lastOrigin, () => e.origin.kind)
+    await noteOrigin($, e.origin.kind)
 
     return next(e)
   })

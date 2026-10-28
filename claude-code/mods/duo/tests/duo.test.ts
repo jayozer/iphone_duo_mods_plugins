@@ -114,11 +114,11 @@ test('a prompt from the app turns duo on and asks for phone-sized replies', asyn
   on('session.surfaces', () => ({ value: ['terminal'] }))
   on('prompt.submit', (_$, e) => ({ text: e.text }) as never)
   on('prompt.compose', () => ({ sections: [] }) as never)
-  const status = () =>
+  const status = (kind: 'bridge' | 'sdk') =>
     $.command.run({
       command: 'duo',
       args: 'status',
-      origin: { kind: 'bridge' },
+      origin: { kind },
       presentation: { isFullscreen: false, columns: 40 },
     })
   const sections = async () => {
@@ -126,18 +126,22 @@ test('a prompt from the app turns duo on and asks for phone-sized replies', asyn
     return (await $.prompt.compose(input)).sections.map(s => s.id)
   }
 
-  expect((await status()).text).toContain('inactive')
+  expect((await status('sdk')).text).toContain('inactive')
+  expect((await status('sdk')).text).toContain('Last prompt from: none yet.')
   expect(await sections()).not.toContain('duo:phone-style')
 
   await $.prompt.submit({ text: 'fix the build', origin: { kind: 'bridge' }, wait: false })
-  expect((await status()).text).toContain('auto, active')
-  expect((await status()).text).toContain('Last prompt from the app: yes.')
+  expect((await status('sdk')).text).toContain('auto, active')
+  expect((await status('sdk')).text).toContain('On the app: yes. Last prompt from: bridge.')
   expect(await sections()).toContain('duo:phone-style')
 
   // Back at the desk: a prompt typed at the terminal turns it off again.
   await $.prompt.submit({ text: 'and the tests', origin: { kind: 'composer' }, wait: false })
-  expect((await status()).text).toContain('inactive')
+  expect((await status('sdk')).text).toContain('inactive')
   expect(await sections()).not.toContain('duo:phone-style')
+
+  // A /duo command typed in the app counts as being on the app too.
+  expect((await status('bridge')).text).toContain('auto, active')
 })
 
 test('/duo reads on lets reads through for the app, which has no pane', async ($, on) => {

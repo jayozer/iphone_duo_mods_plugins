@@ -13,9 +13,11 @@ declare module 'claude-code' {
     duo: {
       mode: DuoMode
       isPhone: boolean
-      // The last prompt you sent came from the Claude app over Remote Control, which
+      // The last prompt or /duo command you sent came from the Claude app over Remote Control, which
       // relays text but never attaches as a surface.
       isFromApp: boolean
+      // Where the last prompt.submit came from (its origin kind), shown by /duo status.
+      lastOrigin: string | null
       breakpoint: number
       turnId: string | null
       activity: Activity[]
