@@ -154,7 +154,9 @@ const recordShellChanges = async ($: EngineInterface) => {
   await update($, recap, intoRecap)
 }
 
-const statusText = async ($: EngineInterface) => {
+const statusText = async ($: EngineInterface, isShellRunning: boolean) => {
+  // A shell command still running may already have written files; its own check comes later.
+  if (isShellRunning) await recordShellChanges($)
   const usage = await $.session.usage()
   await update($, gauges, () => readGauges(usage))
   return glanceText({
@@ -238,7 +240,7 @@ export const register: Register = on => {
     const word = e.args.trim().split(/\s+/)[0] || 'status'
     // The Claude app shows a command's text but not a pane, so it gets the glance as text.
     const isApp = e.origin.kind === 'bridge'
-    if (word === 'monitor' && isApp) return { text: await statusText($) }
+    if (word === 'monitor' && isApp) return { text: await statusText($, shellsRunning > 0) }
     if (word === 'monitor') {
       await openMonitor($)
       return { text: 'Desk monitor opened. Prop the phone half-open and it shows the session at a glance.' }
@@ -252,7 +254,7 @@ export const register: Register = on => {
       await leave($)
       return { text: 'Counting from now: the next time the phone opens this session it gets a summary.' }
     }
-    return { text: await statusText($) }
+    return { text: await statusText($, shellsRunning > 0) }
   })
 
   // A prompt you sent, from the app or the terminal, starts a new recap.

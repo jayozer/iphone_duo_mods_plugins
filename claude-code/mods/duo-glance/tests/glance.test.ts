@@ -378,3 +378,23 @@ test('/glance shows the running step and what is waiting on you', async ($, on) 
   expect(text).toContain('Working 00:00 · AskUserQuestion')
   expect(text).toContain('Waiting on you: Which database?')
 })
+
+test('/glance counts files a running shell command has already written', async ($, on) => {
+  const opened: string[] = []
+  engine(on, opened)
+  tree.files = {}
+  tree.head = 'a'
+  tree.committed = []
+  let text = ''
+  midBash.run = async () => {
+    tree.files['src/early.ts'] = 1
+    text = (await $.command.run(fromApp(''))).text ?? ''
+  }
+  await $.prompt.submit({ text: 'generate', origin: { kind: 'bridge' }, wait: false })
+  await $.tool.call({ tool: 'Bash', input: { command: 'npm run long' } } as never)
+  midBash.run = undefined
+  tree.files = {}
+
+  expect(text).toContain('1 file changed')
+  expect(text).toContain('Changed: early.ts')
+})
