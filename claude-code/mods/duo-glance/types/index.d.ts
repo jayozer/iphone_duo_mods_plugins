@@ -25,6 +25,8 @@ declare module 'claude-code' {
       isPhone: boolean
       away: Away | null
       summary: (Away & { until: number }) | null
+      // What happened since the last prompt you sent, for /glance in the Claude app.
+      recap: Away | null
       // Approvals and questions still open, kept whether or not the phone is away.
       pending: CallLine[]
       // Main-loop tool calls running now, oldest first.

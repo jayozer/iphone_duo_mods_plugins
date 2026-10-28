@@ -15,6 +15,7 @@ import {
   firstQuestion,
   gaugeSvg,
   dirtyPaths,
+  glanceText,
   hasNews,
   isTestCommand,
   outputText,
@@ -31,6 +32,7 @@ const NO_GAUGES: Gauges = { contextPercent: null, ratePercent: null, costUsd: nu
 const isPhone = atom({ plugin: 'duo-glance', key: 'isPhone' } as const, false)
 const away = atom({ plugin: 'duo-glance', key: 'away' } as const, null)
 const summary = atom({ plugin: 'duo-glance', key: 'summary' } as const, null)
+const recap = atom({ plugin: 'duo-glance', key: 'recap' } as const, null)
 const pending = atom({ plugin: 'duo-glance', key: 'pending' } as const, [])
 const steps = atom({ plugin: 'duo-glance', key: 'steps' } as const, [])
 const turnStartedAt = atom({ plugin: 'duo-glance', key: 'turnStartedAt' } as const, null)
@@ -125,6 +127,48 @@ const leave = async ($: EngineInterface) => {
   if (tree !== null) await update($, away, held => (held?.id === id ? { ...held, tree } : held))
 }
 
+// How many prompts have opened a recap; a checkout scan attaches only to the one it began.
+let recaps = 0
+
+// Both logs, the absence and the recap since your last message, see every turn and call.
+const record = async ($: EngineInterface, change: (log: Away) => Away) => {
+  await update($, away, held => (held === null ? null : change(held)))
+  await update($, recap, held => (held === null ? null : change(held)))
+}
+
+// A shell command can change files too (sed -i, a formatter, a generator, a commit):
+// compare the checkout with how it was when each log began, whenever the call began.
+const shellChanges = async ($: EngineInterface, then: Away | null) => {
+  const touched = then?.tree ? await changedSince($, then.tree) : []
+  return (held: Away | null) => {
+    if (held === null || held.id !== then?.id) return held
+    const added = touched.filter(one => !held.changed.includes(one))
+    return added.length === 0 ? held : { ...held, changed: [...held.changed, ...added] }
+  }
+}
+
+const recordShellChanges = async ($: EngineInterface) => {
+  const intoAway = await shellChanges($, await read($, away))
+  await update($, away, intoAway)
+  const intoRecap = await shellChanges($, await read($, recap))
+  await update($, recap, intoRecap)
+}
+
+const statusText = async ($: EngineInterface) => {
+  const usage = await $.session.usage()
+  await update($, gauges, () => readGauges(usage))
+  return glanceText({
+    at: await $.clock.now(),
+    turnStartedAt: await read($, turnStartedAt),
+    step: (await read($, steps)).slice(-1)[0]?.text,
+    lastTest: await read($, lastTest),
+    gauges: await read($, gauges),
+    recap: await read($, recap),
+    away: await read($, away),
+    waiting: await read($, pending),
+  })
+}
+
 const notifyAway = async ($: EngineInterface, text: string) => {
   if ((await read($, away)) === null) return
   void $.ui.notify(text, { title: 'Claude Code' }).catch(() => undefined)
@@ -192,24 +236,37 @@ export const register: Register = on => {
 
   on('command.run', { command: 'glance' }, async ($, e) => {
     const word = e.args.trim().split(/\s+/)[0] || 'status'
+    // The Claude app shows a command's text but not a pane, so it gets the glance as text.
+    const isApp = e.origin.kind === 'bridge'
+    if (word === 'monitor' && isApp) return { text: await statusText($) }
     if (word === 'monitor') {
       await openMonitor($)
       return { text: 'Desk monitor opened. Prop the phone half-open and it shows the session at a glance.' }
+    }
+    if (word === 'away' && isApp) {
+      const text = "The app can't show the away pane. Send /glance any time to see what happened since your last message."
+      return { text }
     }
     if (word === 'away') {
       // Pretend the phone just left, so the next time it attaches you get a summary.
       await leave($)
       return { text: 'Counting from now: the next time the phone opens this session it gets a summary.' }
     }
-    const held = await read($, away)
-    return {
-      text:
-        `Phone attached: ${(await read($, isPhone)) ? 'yes' : 'no'}. ` +
-        (held === null
-          ? 'Not counting an absence.'
-          : `Away for ${duration((await $.clock.now()) - held.since)}: ${held.turns} turns, ` +
-            `${held.changed.length} files changed, ${(await read($, pending)).length} waiting on you.`),
+    return { text: await statusText($) }
+  })
+
+  // A prompt you sent, from the app or the terminal, starts a new recap.
+  on('prompt.submit', async ($, e, next) => {
+    const isTyped = e.origin.kind === 'bridge' || e.origin.kind === 'composer'
+    if (isTyped && e.command === undefined && e.isMeta !== true) {
+      const id = ++recaps
+      const since = await $.clock.now()
+      await update($, recap, () => emptyAway(since, id))
+      const tree = await readTree($)
+      if (tree !== null) await update($, recap, held => (held?.id === id ? { ...held, tree } : held))
     }
+
+    return next(e)
   })
 
   on('ui.close', async ($, e, next) => {
@@ -236,7 +293,7 @@ export const register: Register = on => {
     await update($, steps, () => [])
     // Nothing outlives its turn, even a call the engine never reported back on.
     await update($, pending, () => [])
-    await update($, away, held => (held === null ? null : { ...held, turns: held.turns + 1 }))
+    await record($, log => ({ ...log, turns: log.turns + 1 }))
     const usage = await $.session.usage()
     await update($, gauges, () => readGauges(usage))
     await notifyAway($, e.isAborted ? 'Claude stopped.' : 'Claude finished a turn.')
@@ -291,28 +348,16 @@ export const register: Register = on => {
       if (e.tool === 'Bash' && command !== undefined && isTestCommand(command)) {
         const run = readTestRun(command, outputText('result' in ran ? ran.result : undefined), isFailed)
         await update($, lastTest, () => run)
-        await update($, away, held => (held === null ? null : { ...held, tests: [...held.tests, run] }))
+        await record($, log => ({ ...log, tests: [...log.tests, run] }))
       } else if (isFailed) {
-        await update($, away, held => (held === null ? null : { ...held, errors: held.errors + 1 }))
+        await record($, log => ({ ...log, errors: log.errors + 1 }))
       }
 
       const path = field(input, 'file_path') ?? field(input, 'notebook_path')
       if (!isFailed && path !== undefined && WRITE_TOOLS.includes(e.tool)) {
-        await update($, away, held =>
-          held === null || held.changed.includes(path) ? held : { ...held, changed: [...held.changed, path] },
-        )
+        await record($, log => (log.changed.includes(path) ? log : { ...log, changed: [...log.changed, path] }))
       }
-      // A shell command can change files too (sed -i, a formatter, a generator, a commit):
-      // compare the checkout with how it was when the phone left, whenever the call began.
-      const then = e.tool === 'Bash' ? (await read($, away))?.tree : null
-      if (then !== null && then !== undefined) {
-        const touched = await changedSince($, then)
-        await update($, away, held => {
-          if (held === null) return null
-          const added = touched.filter(one => !held.changed.includes(one))
-          return added.length === 0 ? held : { ...held, changed: [...held.changed, ...added] }
-        })
-      }
+      if (isShell) await recordShellChanges($)
 
       return ran
     } finally {

@@ -1,6 +1,20 @@
-# duo-glance: see your Claude Code session at a glance on the iPhone Duo (v0.1)
+# duo-glance: see your Claude Code session at a glance on the iPhone Duo (v0.2)
 
 It works alongside the [duo](../duo) mod, and you can also install it on its own.
+
+## In the Claude app (Remote Control)
+The Claude app joins a Remote Control session as a relay: it shows text but never draws a mod's panes. So in the app, send `/glance` and you get a short text summary instead:
+
+```
+Working 02:14 · Bash · npm test
+Since your last message (6 min): 1 turn finished · 3 files changed
+Tests failing · 9 passed, 2 failed
+Waiting on you: Approve Bash · git push
+Context 42% · Rate limit 30% · $0.84
+Changed: app.ts, api.ts, app.test.ts
+```
+
+"Since your last message" counts from the last prompt you sent, from the app or the terminal. `/glance monitor` in the app gives the same text, since the monitor pane can't open there. The panes below are for a client that draws them.
 
 ## Away summary
 When the Claude app on your phone leaves the session (you closed it or put the phone away), the mod starts counting what happens. When the phone opens the session again, a **While you were away** pane shows:
@@ -19,7 +33,7 @@ Run `/glance monitor`, or tap **Monitor**, then prop the Duo half-open next to y
 Folded, everything stacks in one column. Unfolded, it splits into status and gauges side by side.
 
 ## Commands
-`/glance monitor` · `/glance away` (starts counting now, useful for testing) · `/glance status`
+`/glance` or `/glance status` (the text summary) · `/glance monitor` · `/glance away` (starts counting now, useful for testing)
 
 ## Install
 At the prompt of a terminal session:
@@ -28,7 +42,7 @@ At the prompt of a terminal session:
 /plugin install duo-glance --marketplace jayozer/iphone_duo_mods_plugins
 ```
 
-To try it from a clone, run `claude --plugin-dir claude-code/mods/duo-glance --remote-control` and open the session from the Claude app on your phone. Run `claude plugin test claude-code/mods/duo-glance` for the tests (12 tests).
+To try it from a clone, run `claude --plugin-dir claude-code/mods/duo-glance --remote-control` and open the session from the Claude app on your phone. Run `claude plugin test claude-code/mods/duo-glance` for the tests (14 tests).
 
 ## Known limits
 - The mod can't tell when the phone is half-folded, so you open the monitor yourself.
